@@ -40,9 +40,10 @@ type Text args msg
     | Text String
     | Node (args -> (List (Node msg) -> Node msg)) ArgName (Text args msg)
     | String (args -> String) ArgName
-    | Float (Float -> String) NumberFormat (args -> Float) ArgName
-    | Int (Int -> String) NumberFormat (args -> Int) ArgName
-    | Plural (Float -> String) (Float -> String -> PluralForm) NumberFormat (args -> Float) ArgName (AllPluralForms args msg)
+    | Float (Maybe NumberFormat) (Float -> String) (args -> Float) ArgName
+    | Int (Maybe NumberFormat) (Int -> String) (args -> Int) ArgName
+    | Select ArgName (args -> ( String, Text args msg ))
+    | Plural (Maybe NumberFormat) (Float -> String) (Float -> String -> PluralForm) (args -> Float) ArgName (AllPluralForms args msg)
     | Count
 
 
@@ -57,6 +58,10 @@ type NumberFormat
     | PercentFormat
     | CurrencyFormat
     | AtLeastFormat
+
+
+type Case args msg a
+    = Case (a -> Bool) String (Text args msg)
 
 
 type PluralForm
@@ -117,26 +122,58 @@ string =
     String
 
 
-float : (Float -> String) -> NumberFormat -> (args -> Float) -> String -> Text args msg
+float : (Float -> String) -> (args -> Float) -> String -> Text args msg
 float =
-    Float
+    Float Nothing
 
 
-int : (Int -> String) -> NumberFormat -> (args -> Int) -> String -> Text args msg
+int : (Int -> String) -> (args -> Int) -> String -> Text args msg
 int =
-    Int
+    Int Nothing
+
+
+select : (args -> a) -> String -> Text args msg -> List (Case args msg a) -> Text args msg
+select accessor name defaultText cases =
+    Select name <|
+        \args ->
+            args
+                |> accessor
+                |> pickCase cases
+                |> Maybe.withDefault ( "other", defaultText )
+
+
+pickCase : List (Case args msg a) -> a -> Maybe ( String, Text args msg )
+pickCase cases a =
+    case cases of
+        (Case test name text) :: rest ->
+            if test a then
+                Just ( name, text )
+            else
+                pickCase rest a
+
+        [] ->
+            Nothing
+
+
+equals : a -> String -> Text args msg -> Case args msg a
+equals a =
+    Case ((==) a)
+
+
+when : (a -> Bool) -> String -> Text args msg -> Case args msg a
+when =
+    Case
 
 
 plural :
     (Float -> String)
     -> (Float -> String -> PluralForm)
-    -> NumberFormat
     -> (args -> Float)
     -> String
     -> AllPluralForms args msg
     -> Text args msg
 plural =
-    Plural
+    Plural Nothing
 
 
 count : Text args msg
@@ -148,34 +185,47 @@ count =
 ---- NUMBER FORMATS
 
 
-customNumberFormat : String -> NumberFormat
-customNumberFormat =
-    CustomNumberFormat
+decimal : ((args -> number) -> String -> Text args msg) -> (args -> number) -> String -> Text args msg
+decimal textFunc accessor name =
+    textFunc accessor name
+        |> setNumberFormat DecimalFormat
 
 
-decimalFormat : NumberFormat
-decimalFormat =
-    DecimalFormat
+scientific : ((args -> number) -> String -> Text args msg) -> (args -> number) -> String -> Text args msg
+scientific textFunc accessor name =
+    textFunc accessor name
+        |> setNumberFormat ScientificFormat
 
 
-scientificFormat : NumberFormat
-scientificFormat =
-    ScientificFormat
+percent : ((args -> number) -> String -> Text args msg) -> (args -> number) -> String -> Text args msg
+percent textFunc accessor name =
+    textFunc accessor name
+        |> setNumberFormat PercentFormat
 
 
-percentFormat : NumberFormat
-percentFormat =
-    PercentFormat
+currency : ((args -> number) -> String -> Text args msg) -> (args -> number) -> String -> Text args msg
+currency textFunc accessor name =
+    textFunc accessor name
+        |> setNumberFormat CurrencyFormat
 
 
-currencyFormat : NumberFormat
-currencyFormat =
-    CurrencyFormat
+atLeast : ((args -> number) -> String -> Text args msg) -> (args -> number) -> String -> Text args msg
+atLeast textFunc accessor name =
+    textFunc accessor name
+        |> setNumberFormat AtLeastFormat
 
 
-atLeastFormat : NumberFormat
-atLeastFormat =
-    AtLeastFormat
+setNumberFormat : NumberFormat -> Text args msg -> Text args msg
+setNumberFormat numberFormat text =
+    case text of
+        Float _ printer accessor name ->
+            Float (Just numberFormat) printer accessor name
+
+        Int _ printer accessor name ->
+            Int (Just numberFormat) printer accessor name
+
+        _ ->
+            text
 
 
 
@@ -228,17 +278,23 @@ printText maybeCount args text =
         String accessor _ ->
             accessor args
 
-        Float printer _ accessor _ ->
+        Float _ printer accessor _ ->
             args
                 |> accessor
                 |> printer
 
-        Int printer _ accessor _ ->
+        Int _ printer accessor _ ->
             args
                 |> accessor
                 |> printer
 
-        Plural countToString countToPluralForm _ accessor _ allPluralForms ->
+        Select _ textAccessor ->
+            args
+                |> textAccessor
+                |> Tuple.second
+                |> printText maybeCount args
+
+        Plural _ countToString countToPluralForm accessor _ allPluralForms ->
             let
                 count =
                     args
@@ -306,21 +362,27 @@ textToNodes maybeCount args text =
                 |> VirtualDom.text
             ]
 
-        Float printer _ accessor _ ->
+        Float _ printer accessor _ ->
             [ args
                 |> accessor
                 |> printer
                 |> VirtualDom.text
             ]
 
-        Int printer _ accessor _ ->
+        Int _ printer accessor _ ->
             [ args
                 |> accessor
                 |> printer
                 |> VirtualDom.text
             ]
 
-        Plural countToString countToPluralForm _ accessor _ allPluralForms ->
+        Select _ textAccessor ->
+            args
+                |> textAccessor
+                |> Tuple.second
+                |> textToNodes maybeCount args
+
+        Plural _ countToString countToPluralForm accessor _ allPluralForms ->
             let
                 count =
                     args
@@ -516,7 +578,7 @@ stringArgs args text =
             Dict.empty
 
 
-floatArgs : args -> Text args msg -> Dict String ( NumberFormat, Float )
+floatArgs : args -> Text args msg -> Dict String ( Maybe NumberFormat, Float )
 floatArgs args text =
     case text of
         Texts texts ->
@@ -524,17 +586,17 @@ floatArgs args text =
                 |> List.map (floatArgs args)
                 |> List.foldl Dict.union Dict.empty
 
-        Float _ numberFormat accessor name ->
-            Dict.singleton name ( numberFormat, args |> accessor )
+        Float maybeNumberFormat _ accessor name ->
+            Dict.singleton name ( maybeNumberFormat, args |> accessor )
 
-        Plural _ _ numberFormat accessor name _ ->
-            Dict.singleton name ( numberFormat, args |> accessor )
+        Plural maybeNumberFormat _ _ accessor name _ ->
+            Dict.singleton name ( maybeNumberFormat, args |> accessor )
 
         _ ->
             Dict.empty
 
 
-intArgs : args -> Text args msg -> Dict String ( NumberFormat, Int )
+intArgs : args -> Text args msg -> Dict String ( Maybe NumberFormat, Int )
 intArgs args text =
     case text of
         Texts texts ->
@@ -542,8 +604,26 @@ intArgs args text =
                 |> List.map (intArgs args)
                 |> List.foldl Dict.union Dict.empty
 
-        Int _ numberFormat accessor name ->
-            Dict.singleton name ( numberFormat, args |> accessor )
+        Int maybeNumberFormat _ accessor name ->
+            Dict.singleton name ( maybeNumberFormat, args |> accessor )
+
+        _ ->
+            Dict.empty
+
+
+selectArgs : args -> Text args msg -> Dict String String
+selectArgs args text =
+    case text of
+        Texts texts ->
+            texts
+                |> List.map (selectArgs args)
+                |> List.foldl Dict.union Dict.empty
+
+        Select name accessor ->
+            args
+                |> accessor
+                |> Tuple.first
+                |> Dict.singleton name
 
         _ ->
             Dict.empty
