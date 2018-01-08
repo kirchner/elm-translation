@@ -1,6 +1,6 @@
 module Translation
     exposing
-        ( ArgName
+        ( Name
         , NumberFormat
         , PluralForm
             ( Few
@@ -38,16 +38,16 @@ type Translation args msg
 type Text args msg
     = Texts (List (Text args msg))
     | Text String
-    | Node (args -> (List (Node msg) -> Node msg)) ArgName (Text args msg)
-    | String (args -> String) ArgName
-    | Float (Maybe NumberFormat) (Float -> String) (args -> Float) ArgName
-    | Int (Maybe NumberFormat) (Int -> String) (args -> Int) ArgName
-    | Select ArgName (args -> ( String, Text args msg ))
-    | Plural (Maybe NumberFormat) (Float -> String) (Float -> String -> PluralForm) (args -> Float) ArgName (AllPluralForms args msg)
+    | Node (args -> (List (Node msg) -> Node msg)) Name (Text args msg)
+    | String (args -> String) Name
+    | Float (Maybe NumberFormat) (Float -> String) (args -> Float) Name
+    | Int (Maybe NumberFormat) (Int -> String) (args -> Int) Name
+    | Select Name (args -> ( String, Text args msg ))
+    | Plural (Maybe NumberFormat) (Float -> String) (Float -> String -> PluralForm) (args -> Float) Name (AllPluralForms args msg)
     | Count
 
 
-type alias ArgName =
+type alias Name =
     String
 
 
