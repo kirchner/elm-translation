@@ -42,7 +42,7 @@ type Text args msg
     | String (args -> String) Name
     | Float (Maybe NumberFormat) (Float -> String) (args -> Float) Name
     | Int (Maybe NumberFormat) (Int -> String) (args -> Int) Name
-    | Select Name (args -> ( String, Text args msg ))
+    | Select Name (args -> ( Name, Text args msg ))
     | Plural (Maybe NumberFormat) (Float -> String) (Float -> String -> PluralForm) (args -> Float) Name (AllPluralForms args msg)
     | Count
 
@@ -61,7 +61,7 @@ type NumberFormat
 
 
 type Case args msg a
-    = Case (a -> Bool) String (Text args msg)
+    = Case (a -> Bool) Name (Text args msg)
 
 
 type PluralForm
@@ -87,12 +87,12 @@ type alias AllPluralForms args msg =
 ---- TRANSLATION CONSTRUCTOR
 
 
-final : String -> Text args msg -> Translation args msg
+final : Name -> Text args msg -> Translation args msg
 final =
     Final
 
 
-fallback : String -> Text args msg -> Translation args msg
+fallback : Name -> Text args msg -> Translation args msg
 fallback =
     Fallback
 
@@ -112,27 +112,27 @@ concat =
     Texts
 
 
-node : (args -> (List (Node msg) -> Node msg)) -> String -> Text args msg -> Text args msg
+node : (args -> (List (Node msg) -> Node msg)) -> Name -> Text args msg -> Text args msg
 node =
     Node
 
 
-string : (args -> String) -> String -> Text args msg
+string : (args -> String) -> Name -> Text args msg
 string =
     String
 
 
-float : (Float -> String) -> (args -> Float) -> String -> Text args msg
+float : (Float -> String) -> (args -> Float) -> Name -> Text args msg
 float =
     Float Nothing
 
 
-int : (Int -> String) -> (args -> Int) -> String -> Text args msg
+int : (Int -> String) -> (args -> Int) -> Name -> Text args msg
 int =
     Int Nothing
 
 
-select : (args -> a) -> String -> Text args msg -> List (Case args msg a) -> Text args msg
+select : (args -> a) -> Name -> Text args msg -> List (Case args msg a) -> Text args msg
 select accessor name defaultText cases =
     Select name <|
         \args ->
@@ -142,7 +142,7 @@ select accessor name defaultText cases =
                 |> Maybe.withDefault ( "other", defaultText )
 
 
-pickCase : List (Case args msg a) -> a -> Maybe ( String, Text args msg )
+pickCase : List (Case args msg a) -> a -> Maybe ( Name, Text args msg )
 pickCase cases a =
     case cases of
         (Case test name text) :: rest ->
@@ -155,12 +155,12 @@ pickCase cases a =
             Nothing
 
 
-equals : a -> String -> Text args msg -> Case args msg a
+equals : a -> Name > Text args msg -> Case args msg a
 equals a =
     Case ((==) a)
 
 
-when : (a -> Bool) -> String -> Text args msg -> Case args msg a
+when : (a -> Bool) -> Name -> Text args msg -> Case args msg a
 when =
     Case
 
@@ -169,7 +169,7 @@ plural :
     (Float -> String)
     -> (Float -> String -> PluralForm)
     -> (args -> Float)
-    -> String
+    -> Name
     -> AllPluralForms args msg
     -> Text args msg
 plural =
@@ -185,31 +185,31 @@ count =
 ---- NUMBER FORMATS
 
 
-decimal : ((args -> number) -> String -> Text args msg) -> (args -> number) -> String -> Text args msg
+decimal : ((args -> number) -> Name -> Text args msg) -> (args -> number) -> Name -> Text args msg
 decimal textFunc accessor name =
     textFunc accessor name
         |> setNumberFormat DecimalFormat
 
 
-scientific : ((args -> number) -> String -> Text args msg) -> (args -> number) -> String -> Text args msg
+scientific : ((args -> number) -> Name -> Text args msg) -> (args -> number) -> Name -> Text args msg
 scientific textFunc accessor name =
     textFunc accessor name
         |> setNumberFormat ScientificFormat
 
 
-percent : ((args -> number) -> String -> Text args msg) -> (args -> number) -> String -> Text args msg
+percent : ((args -> number) -> Name -> Text args msg) -> (args -> number) -> Name -> Text args msg
 percent textFunc accessor name =
     textFunc accessor name
         |> setNumberFormat PercentFormat
 
 
-currency : ((args -> number) -> String -> Text args msg) -> (args -> number) -> String -> Text args msg
+currency : ((args -> number) -> Name -> Text args msg) -> (args -> number) -> Name -> Text args msg
 currency textFunc accessor name =
     textFunc accessor name
         |> setNumberFormat CurrencyFormat
 
 
-atLeast : ((args -> number) -> String -> Text args msg) -> (args -> number) -> String -> Text args msg
+atLeast : ((args -> number) -> Name -> Text args msg) -> (args -> number) -> Name -> Text args msg
 atLeast textFunc accessor name =
     textFunc accessor name
         |> setNumberFormat AtLeastFormat
@@ -543,12 +543,12 @@ translateToWith locale args translation =
 -- INTERNAL TRANSLATE HELPER
 
 
-translateText : Maybe String -> Locale -> args -> String -> Text args msg -> String
+translateText : Maybe String -> Locale -> args -> Name -> Text args msg -> String
 translateText maybeCount locale args name text =
     "TODO: implement"
 
 
-nodeArgs : args -> Text args msg -> Dict String (List (Node msg) -> Node msg)
+nodeArgs : args -> Text args msg -> Dict Name (List (Node msg) -> Node msg)
 nodeArgs args text =
     case text of
         Texts texts ->
@@ -563,7 +563,7 @@ nodeArgs args text =
             Dict.empty
 
 
-stringArgs : args -> Text args msg -> Dict String String
+stringArgs : args -> Text args msg -> Dict Name String
 stringArgs args text =
     case text of
         Texts texts ->
@@ -578,7 +578,7 @@ stringArgs args text =
             Dict.empty
 
 
-floatArgs : args -> Text args msg -> Dict String ( Maybe NumberFormat, Float )
+floatArgs : args -> Text args msg -> Dict Name ( Maybe NumberFormat, Float )
 floatArgs args text =
     case text of
         Texts texts ->
@@ -596,7 +596,7 @@ floatArgs args text =
             Dict.empty
 
 
-intArgs : args -> Text args msg -> Dict String ( Maybe NumberFormat, Int )
+intArgs : args -> Text args msg -> Dict Name ( Maybe NumberFormat, Int )
 intArgs args text =
     case text of
         Texts texts ->
@@ -611,7 +611,7 @@ intArgs args text =
             Dict.empty
 
 
-selectArgs : args -> Text args msg -> Dict String String
+selectArgs : args -> Text args msg -> Dict Name Name
 selectArgs args text =
     case text of
         Texts texts ->
