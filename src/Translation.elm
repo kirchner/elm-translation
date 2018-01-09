@@ -14,6 +14,9 @@ module Translation
         , Translation
         , concat
         , count
+        , equals
+        , fallback
+        , final
         , float
         , int
         , node
@@ -22,7 +25,10 @@ module Translation
         , print
         , printWith
         , s
+        , select
         , string
+        , toIcu
+        , when
         )
 
 import Dict exposing (Dict)
@@ -41,8 +47,8 @@ type Text args msg
     | Node (args -> (List (Node msg) -> Node msg)) Name (Text args msg)
     | String (args -> String) Name
     | Float (Maybe NumberFormat) (Float -> String) (args -> Float) Name
-    | Int (Maybe NumberFormat) (Int -> String) (args -> Int) Name
-    | Select Name (args -> ( Name, Text args msg ))
+    | Int (Int -> String) (args -> Int) Name
+    | Select Name (Text args msg) (List ( Name, Text args msg )) (args -> ( Name, Text args msg ))
     | Plural (Maybe NumberFormat) (Float -> String) (Float -> String -> PluralForm) (args -> Float) Name (AllPluralForms args msg)
     | Count
 
@@ -52,8 +58,7 @@ type alias Name =
 
 
 type NumberFormat
-    = CustomNumberFormat String
-    | DecimalFormat
+    = DecimalFormat
     | ScientificFormat
     | PercentFormat
     | CurrencyFormat
@@ -129,12 +134,17 @@ float =
 
 int : (Int -> String) -> (args -> Int) -> Name -> Text args msg
 int =
-    Int Nothing
+    Int
 
 
 select : (args -> a) -> Name -> Text args msg -> List (Case args msg a) -> Text args msg
 select accessor name defaultText cases =
-    Select name <|
+    let
+        caseNames =
+            cases
+                |> List.map (\(Case _ caseName caseText) -> ( caseName, caseText ))
+    in
+    Select name defaultText caseNames <|
         \args ->
             args
                 |> accessor
@@ -155,7 +165,7 @@ pickCase cases a =
             Nothing
 
 
-equals : a -> Name > Text args msg -> Case args msg a
+equals : a -> Name -> Text args msg -> Case args msg a
 equals a =
     Case ((==) a)
 
@@ -221,8 +231,8 @@ setNumberFormat numberFormat text =
         Float _ printer accessor name ->
             Float (Just numberFormat) printer accessor name
 
-        Int _ printer accessor name ->
-            Int (Just numberFormat) printer accessor name
+        Plural _ printer toPluralForm accessor name allPluralForms ->
+            Plural (Just numberFormat) printer toPluralForm accessor name allPluralForms
 
         _ ->
             text
@@ -283,12 +293,12 @@ printText maybeCount args text =
                 |> accessor
                 |> printer
 
-        Int _ printer accessor _ ->
+        Int printer accessor _ ->
             args
                 |> accessor
                 |> printer
 
-        Select _ textAccessor ->
+        Select _ _ _ textAccessor ->
             args
                 |> textAccessor
                 |> Tuple.second
@@ -369,14 +379,14 @@ textToNodes maybeCount args text =
                 |> VirtualDom.text
             ]
 
-        Int _ printer accessor _ ->
+        Int printer accessor _ ->
             [ args
                 |> accessor
                 |> printer
                 |> VirtualDom.text
             ]
 
-        Select _ textAccessor ->
+        Select _ _ _ textAccessor ->
             args
                 |> textAccessor
                 |> Tuple.second
@@ -596,7 +606,7 @@ floatArgs args text =
             Dict.empty
 
 
-intArgs : args -> Text args msg -> Dict Name ( Maybe NumberFormat, Int )
+intArgs : args -> Text args msg -> Dict Name Int
 intArgs args text =
     case text of
         Texts texts ->
@@ -604,8 +614,8 @@ intArgs args text =
                 |> List.map (intArgs args)
                 |> List.foldl Dict.union Dict.empty
 
-        Int maybeNumberFormat _ accessor name ->
-            Dict.singleton name ( maybeNumberFormat, args |> accessor )
+        Int _ accessor name ->
+            Dict.singleton name (args |> accessor)
 
         _ ->
             Dict.empty
@@ -619,7 +629,7 @@ selectArgs args text =
                 |> List.map (selectArgs args)
                 |> List.foldl Dict.union Dict.empty
 
-        Select name accessor ->
+        Select name _ _ accessor ->
             args
                 |> accessor
                 |> Tuple.first
@@ -627,3 +637,175 @@ selectArgs args text =
 
         _ ->
             Dict.empty
+
+
+
+---- EXPORT
+
+
+toIcu : Translation args msg -> String
+toIcu translation =
+    case translation of
+        Final _ text ->
+            textToIcu Nothing text
+
+        Fallback _ text ->
+            textToIcu Nothing text
+
+
+textToIcu : Maybe ( Name, Maybe NumberFormat ) -> Text args msg -> String
+textToIcu maybeCount text =
+    case text of
+        Texts texts ->
+            texts
+                |> List.map (textToIcu maybeCount)
+                |> String.concat
+
+        Text string ->
+            string
+
+        Node _ name nodeText ->
+            [ "{"
+            , name
+            , ", node, "
+            , "{"
+            , nodeText |> textToIcu maybeCount
+            , "}"
+            ]
+                |> String.concat
+
+        String _ name ->
+            [ "{"
+            , name
+            , "}"
+            ]
+                |> String.concat
+
+        Float maybeNumberFormat _ _ name ->
+            [ "{"
+            , name
+            , ", "
+            , case maybeNumberFormat of
+                Nothing ->
+                    "number"
+
+                Just DecimalFormat ->
+                    "number, decimal"
+
+                Just ScientificFormat ->
+                    "number, scientific"
+
+                Just PercentFormat ->
+                    "number, percent"
+
+                Just CurrencyFormat ->
+                    "number, currency"
+
+                Just AtLeastFormat ->
+                    "number, atLeast"
+            , "}"
+            ]
+                |> String.concat
+
+        Int _ _ name ->
+            [ "{"
+            , name
+            , ", number, integer}"
+            ]
+                |> String.concat
+
+        Select name defaultText cases _ ->
+            [ "{"
+            , name
+            , ", select, "
+            , ([ "other{"
+               , defaultText |> textToIcu maybeCount
+               , "}"
+               ]
+                |> String.concat
+              )
+                :: (cases
+                        |> List.map
+                            (\( caseName, caseText ) ->
+                                [ caseName
+                                , "{"
+                                , caseText |> textToIcu maybeCount
+                                , "}"
+                                ]
+                                    |> String.concat
+                            )
+                   )
+                |> String.join " "
+            , "}"
+            ]
+                |> String.concat
+
+        Plural maybeNumberFormat _ _ _ name allPluralForms ->
+            let
+                pluralFormToIcu ( formName, maybeFormText ) =
+                    case maybeFormText of
+                        Just formText ->
+                            [ formName
+                            , "{"
+                            , formText |> textToIcu (Just ( name, maybeNumberFormat ))
+                            , "}"
+                            ]
+                                |> String.concat
+                                |> Just
+
+                        Nothing ->
+                            Nothing
+            in
+            [ "{"
+            , name
+            , ", plural, "
+            , ([ "other{"
+               , allPluralForms.other
+                    |> textToIcu (Just ( name, maybeNumberFormat ))
+               , "}"
+               ]
+                |> String.concat
+              )
+                :: ([ ( "zero", allPluralForms.zero )
+                    , ( "one", allPluralForms.one )
+                    , ( "two", allPluralForms.two )
+                    , ( "few", allPluralForms.few )
+                    , ( "many", allPluralForms.many )
+                    ]
+                        |> List.filterMap pluralFormToIcu
+                   )
+                |> String.join " "
+            , "}"
+            ]
+                |> String.concat
+
+        Count ->
+            case maybeCount of
+                Just ( countName, maybeNumberFormat ) ->
+                    [ "{"
+                    , countName
+                    , ", "
+                    , case maybeNumberFormat of
+                        Nothing ->
+                            "number"
+
+                        Just DecimalFormat ->
+                            "number, decimal"
+
+                        Just ScientificFormat ->
+                            "number, scientific"
+
+                        Just PercentFormat ->
+                            "number, percent"
+
+                        Just CurrencyFormat ->
+                            "number, currency"
+
+                        Just AtLeastFormat ->
+                            "number, atLeast"
+                    , "}"
+                    ]
+                        |> String.concat
+
+                Nothing ->
+                    "#"
