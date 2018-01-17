@@ -1,7 +1,8 @@
 module Translation
     exposing
-        ( Name
-        , NumberFormat
+        ( AllPluralForms
+        , Arg
+        , Name
         , PluralForm
             ( Few
             , Many
@@ -12,63 +13,137 @@ module Translation
             )
         , Text
         , Translation
+        , asNodes
+        , asString
+        , asStringWith
         , concat
         , count
-        , equals
         , fallback
         , final
         , float
-        , int
         , node
-        , nodes
         , plural
-        , print
-        , printWith
         , s
-        , select
         , string
-        , toIcu
-        , when
+        , wrapFloat
         )
+
+{-|
+
+@docs Translation, Text
+
+@docs final, fallback
+
+@docs Name, Arg
+
+
+# Creating `Text`'s
+
+@docs s, concat, string, node
+
+@docs float, wrapFloat
+
+@docs plural, PluralForm, AllPluralForms, count
+
+
+# Printing `Translation`s
+
+@docs asString, asStringWith, asNodes
+
+-}
 
 import Dict exposing (Dict)
 import Set
 import VirtualDom exposing (Node)
 
 
+{-| A `Translation` is a piece of localized text in a specific language.
+You can turn it into a `String` using `asString`. It can also contain
+placeholders, for example `Translation { args | name : String } msg`.
+You then have to use `asStringWith` and provide values for every
+placeholder.
+
+It is also possible to turn a `Translation` into a list of Dom nodes
+using `asNodes`. Take a look the package documentation for an example.
+It's really convenient!
+
+-}
 type Translation args msg
     = Final String (Text args msg)
     | Fallback String (Text args msg)
 
 
+{-| This is the building block for your translations. `Text`s can
+either be just `String`s or placeholders for `String`s, `Float`s,
+`Date`s, ..., along with rules for how to print these. Also
+pluralization is possible. There are several functions for creating
+`Text`s, further down.
+-}
 type Text args msg
     = Texts (List (Text args msg))
-    | Text String
-    | Node (args -> (List (Node msg) -> Node msg)) Name (Text args msg)
+    | Verbatim String
     | String (args -> String) Name
-    | Float (Maybe NumberFormat) (Float -> String) (args -> Float) Name
-    | Int (Int -> String) (args -> Int) Name
-    | Select Name (Text args msg) (List ( Name, Text args msg )) (args -> ( Name, Text args msg ))
-    | Plural (Maybe NumberFormat) (Float -> String) (Float -> String -> PluralForm) (args -> Float) Name (AllPluralForms args msg)
+    | Node (args -> (List (Node msg) -> Node msg)) Name (Text args msg)
+    | Float (Printer Float) (args -> Float) Name
+    | WrapFloat (Wrapper Float args msg) (Arg Float args msg) (args -> Float) Name
+    | Plural (Float -> String -> PluralForm) (Arg Float args msg) (args -> Float) Name (AllPluralForms args msg)
     | Count
 
 
+{-| -}
 type alias Name =
     String
 
 
-type NumberFormat
-    = DecimalFormat
-    | ScientificFormat
-    | PercentFormat
-    | CurrencyFormat
-    | AtLeastFormat
+{-| This is a convenience alias to make the type signatures more
+concise. `args` will be a record type specifying which placeholder one
+has to provide when printing the translation. This is done by
+providing an accessor function `args -> a`. The `Name` should be
+a sensefull `String` representation of this accessor.
+-}
+type alias Arg a args msg =
+    (args -> a) -> Name -> Text args msg
 
 
-type Case args msg a
-    = Case (a -> Bool) Name (Text args msg)
+{-| When printing placeholders which are not `String`s we need to know
+how to turn them into `String`s. We do this by providing a `Printer`.
+-}
+type Printer a
+    = Printer (List Name) (a -> String)
 
 
+{-| Create a `Printer`. The first argument should be a unique
+identifier, the second argument is the actual "printer":
+
+    stringify : Printer a
+    stringify =
+        printer [ "stringify" ] toString
+
+-}
+printer : List Name -> (a -> String) -> Printer a
+printer =
+    Printer
+
+
+{-| Sometimes it makes sense to wrap a placeholder in some other `Text`,
+for example when defining helpers for printing units like meter,
+seconds, ...:
+
+    unitShortLengthMeterWrapper : Wrapper Float
+    unitShortLengthMeterWrapper =
+        wrapper [ "unit", "short", "length-meter" ] <|
+            \wrapped accessor name ->
+                concat
+                    [ wrapped accessor name
+                    , s " m"
+                    ]
+
+-}
+type Wrapper a args msg
+    = Wrapper (List Name) (Arg a args msg -> Arg a args msg)
+
+
+{-| -}
 type PluralForm
     = Other
     | Zero
@@ -78,6 +153,7 @@ type PluralForm
     | Many
 
 
+{-| -}
 type alias AllPluralForms args msg =
     { other : Text args msg
     , zero : Maybe (Text args msg)
@@ -92,11 +168,29 @@ type alias AllPluralForms args msg =
 ---- TRANSLATION CONSTRUCTOR
 
 
+{-| Create a "final" `Translation` out of a `Text` by giving it a name.
+Usually the name should be a string representation of the function name
+used for the translation.
+
+When using `kirchner/elm-translation-runner`, final translations will be
+exported when running
+
+    $ elm-translations generate-json
+
+-}
 final : Name -> Text args msg -> Translation args msg
 final =
     Final
 
 
+{-| Create a "fallback" translation. This works as `final`, but when
+running
+
+    $ elm-translations generate-json
+
+it will **not** be exported.
+
+-}
 fallback : Name -> Text args msg -> Translation args msg
 fallback =
     Fallback
@@ -106,144 +200,168 @@ fallback =
 ---- TEXT CONSTRUCTOR
 
 
+{-| Create a `Text` which gets replaced by the provided `String`:
+
+    greeting : Translation args msg
+    greeting =
+        final "greeting" <|
+            s "Good morning!"
+
+-}
 s : String -> Text args msg
 s =
-    Text
+    Verbatim
 
 
+{-| Join a list of `Text`s:
+
+    longerGreeting : Translation args msg
+    longerGreeting =
+        final "longerGreeting" <|
+            concat
+                [ s "Good evening!\n"
+                , s "We are happy to have you here!"
+                ]
+
+-}
 concat : List (Text args msg) -> Text args msg
 concat =
     -- TODO: merge lists of lists
     Texts
 
 
+{-| When using `asNodes` on a `Translation`, this `Text` will become
+a node with a `Node.text` subnode containing the provided `Text`:
+
+    question : Translation args msg
+    question =
+        final "question" <|
+            concat
+                [ s "What is "
+                , node .strong "strong" <|
+                    s "your"
+                , s " favourite programming language?"
+                ]
+
+-}
 node : (args -> (List (Node msg) -> Node msg)) -> Name -> Text args msg -> Text args msg
 node =
     Node
 
 
-string : (args -> String) -> Name -> Text args msg
+{-| Create a placeholder for a `String`:
+
+    personalGreeting : Translation { name : String } msg
+    personalGreeting =
+        final "greeting" <|
+            concat
+                [ "Hello, "
+                , string .name "name"
+                , "!"
+                ]
+
+-}
+string : Arg String args msg
 string =
     String
 
 
-float : (Float -> String) -> (args -> Float) -> Name -> Text args msg
+{-| Create a placeholder for a `Float`. You also need to provide
+a `Printer Float`, so we know how to turn the actual value into
+a `String`:
+
+    mailboxInfo : Translation { args | mailCount : Float } msg
+    mailboxInfo =
+        final "mailboxInfo" <|
+            concat
+                [ "Number of new mails: "
+                , float intPrinter .mailCount "mailCount"
+                ]
+
+    intPrinter : Printer Float
+    intPrinter =
+        printer [ "int" ] <|
+            \float ->
+                float
+                    |> floor
+                    |> toString
+
+**Note:** The package `kirchner/elm-cldr` exposes several of these
+placeholder functions for all the number formats and locales which are
+defined in the [CLDR](http://cldr.unicode.org). You most likely want to
+use one of those.
+
+-}
+float : Printer Float -> Arg Float args msg
 float =
-    Float Nothing
+    Float
 
 
-int : (Int -> String) -> (args -> Int) -> Name -> Text args msg
-int =
-    Int
+{-| Wrap a `Float` placeholder in some other `Text`. You usually need
+these for formatting units:
+
+    distanceInfo : Translation { args | distance : Float } msg
+    distanceInfo =
+        final "distanceInfo" <|
+            concat
+                [ "Distance travelled: "
+                , wrapFloat unitShortLengthMeterWrapper <|
+                    float intPrinter .distance "distance"
+                ]
+
+    unitShortLengthMeterWrapper : Wrapper Float
+    unitShortLengthMeterWrapper =
+        wrapper [ "unit", "short", "length-meter" ] <|
+            \wrapped accessor name ->
+                concat
+                    [ wrapped accessor name
+                    , s " m"
+                    ]
+
+    intPrinter : Printer Float
+    intPrinter =
+        printer [ "int" ] <|
+            \float ->
+                float
+                    |> floor
+                    |> toString
+
+**Note:** There are also a lot of wrappers in `kirchner/elm-cldr` for
+any locale.
+
+-}
+wrapFloat : Wrapper Float args msg -> Arg Float args msg -> Arg Float args msg
+wrapFloat =
+    WrapFloat
 
 
-select : (args -> a) -> Name -> Text args msg -> List (Case args msg a) -> Text args msg
-select accessor name defaultText cases =
-    let
-        caseNames =
-            cases
-                |> List.map (\(Case _ caseName caseText) -> ( caseName, caseText ))
-    in
-    Select name defaultText caseNames <|
-        \args ->
-            args
-                |> accessor
-                |> pickCase cases
-                |> Maybe.withDefault ( "other", defaultText )
-
-
-pickCase : List (Case args msg a) -> a -> Maybe ( Name, Text args msg )
-pickCase cases a =
-    case cases of
-        (Case test name text) :: rest ->
-            if test a then
-                Just ( name, text )
-            else
-                pickCase rest a
-
-        [] ->
-            Nothing
-
-
-equals : a -> Name -> Text args msg -> Case args msg a
-equals a =
-    Case ((==) a)
-
-
-when : (a -> Bool) -> Name -> Text args msg -> Case args msg a
-when =
-    Case
-
-
+{-| -}
 plural :
-    (Float -> String)
-    -> (Float -> String -> PluralForm)
+    (Float -> String -> PluralForm)
+    -> Arg Float args msg
     -> (args -> Float)
     -> Name
     -> AllPluralForms args msg
     -> Text args msg
 plural =
-    Plural Nothing
+    Plural
 
 
+{-| -}
 count : Text args msg
 count =
     Count
 
 
 
----- NUMBER FORMATS
-
-
-decimal : ((args -> number) -> Name -> Text args msg) -> (args -> number) -> Name -> Text args msg
-decimal textFunc accessor name =
-    textFunc accessor name
-        |> setNumberFormat DecimalFormat
-
-
-scientific : ((args -> number) -> Name -> Text args msg) -> (args -> number) -> Name -> Text args msg
-scientific textFunc accessor name =
-    textFunc accessor name
-        |> setNumberFormat ScientificFormat
-
-
-percent : ((args -> number) -> Name -> Text args msg) -> (args -> number) -> Name -> Text args msg
-percent textFunc accessor name =
-    textFunc accessor name
-        |> setNumberFormat PercentFormat
-
-
-currency : ((args -> number) -> Name -> Text args msg) -> (args -> number) -> Name -> Text args msg
-currency textFunc accessor name =
-    textFunc accessor name
-        |> setNumberFormat CurrencyFormat
-
-
-atLeast : ((args -> number) -> Name -> Text args msg) -> (args -> number) -> Name -> Text args msg
-atLeast textFunc accessor name =
-    textFunc accessor name
-        |> setNumberFormat AtLeastFormat
-
-
-setNumberFormat : NumberFormat -> Text args msg -> Text args msg
-setNumberFormat numberFormat text =
-    case text of
-        Float _ printer accessor name ->
-            Float (Just numberFormat) printer accessor name
-
-        Plural _ printer toPluralForm accessor name allPluralForms ->
-            Plural (Just numberFormat) printer toPluralForm accessor name allPluralForms
-
-        _ ->
-            text
-
-
-
 ---- PRINT
 
 
-printWith : args -> Translation args msg -> String
-printWith args translation =
+{-| Turn a `Translation` into a `String` by providing values for all
+placeholders.
+-}
+asStringWith : args -> Translation args msg -> String
+asStringWith args translation =
     case translation of
         Final _ text ->
             printText Nothing args text
@@ -252,13 +370,19 @@ printWith args translation =
             printText Nothing args text
 
 
-print : Translation {} msg -> String
-print translation =
-    printWith {} translation
+{-| Turn a `Translation` which does not contain any placeholders into
+a `String`.
+-}
+asString : Translation {} msg -> String
+asString translation =
+    asStringWith {} translation
 
 
-nodes : args -> Translation args msg -> List (Node msg)
-nodes args translation =
+{-| Turn a `Translation` into a list of dom nodes. Take a look at the
+package documentation for examples.
+-}
+asNodes : args -> Translation args msg -> List (Node msg)
+asNodes args translation =
     case translation of
         Final _ text ->
             textToNodes Nothing args text
@@ -279,40 +403,36 @@ printText maybeCount args text =
                 |> List.map (printText maybeCount args)
                 |> String.concat
 
-        Text string ->
+        Verbatim string ->
             string
 
-        Node accessor _ text ->
+        Node _ accessor text ->
             printText maybeCount args text
 
         String accessor _ ->
             accessor args
 
-        Float _ printer accessor _ ->
+        Float (Printer _ print) accessor _ ->
             args
                 |> accessor
-                |> printer
+                |> print
 
-        Int printer accessor _ ->
-            args
-                |> accessor
-                |> printer
-
-        Select _ _ _ textAccessor ->
-            args
-                |> textAccessor
-                |> Tuple.second
+        WrapFloat (Wrapper _ wrap) wrapped accessor name ->
+            wrap wrapped accessor name
                 |> printText maybeCount args
 
-        Plural _ countToString countToPluralForm accessor _ allPluralForms ->
+        Plural countToPluralForm wrapped accessor name allPluralForms ->
             let
+                countText =
+                    wrapped accessor name
+
                 count =
-                    args
-                        |> accessor
-                        |> countToString
+                    countText |> printText Nothing args
 
                 pluralForm =
-                    countToPluralForm (args |> accessor) count
+                    countToPluralForm
+                        (args |> accessor)
+                        count
 
                 printMaybeForm form =
                     form
@@ -357,7 +477,7 @@ textToNodes maybeCount args text =
                 |> List.map (textToNodes maybeCount args)
                 |> List.concat
 
-        Text string ->
+        Verbatim string ->
             [ VirtualDom.text string ]
 
         Node accessor _ text ->
@@ -372,35 +492,29 @@ textToNodes maybeCount args text =
                 |> VirtualDom.text
             ]
 
-        Float _ printer accessor _ ->
+        Float (Printer _ print) accessor _ ->
             [ args
                 |> accessor
-                |> printer
+                |> print
                 |> VirtualDom.text
             ]
 
-        Int printer accessor _ ->
-            [ args
-                |> accessor
-                |> printer
-                |> VirtualDom.text
-            ]
-
-        Select _ _ _ textAccessor ->
-            args
-                |> textAccessor
-                |> Tuple.second
+        WrapFloat (Wrapper _ wrap) wrapped accessor name ->
+            wrap wrapped accessor name
                 |> textToNodes maybeCount args
 
-        Plural _ countToString countToPluralForm accessor _ allPluralForms ->
+        Plural countToPluralForm wrapped accessor name allPluralForms ->
             let
+                countText =
+                    wrapped accessor name
+
                 count =
-                    args
-                        |> accessor
-                        |> countToString
+                    countText |> printText Nothing args
 
                 pluralForm =
-                    countToPluralForm (args |> accessor) count
+                    countToPluralForm
+                        (args |> accessor)
+                        count
 
                 printMaybeForm form =
                     form
@@ -447,8 +561,8 @@ type Locale
 
 type alias LocaleData =
     { translations : Dict String String
-    , printFloat : NumberFormat -> Float -> String
-    , printInt : NumberFormat -> Int -> String
+    , printFloat : List Name -> Float -> String
+    , printInt : List Name -> Int -> String
     , cardinalForm : Float -> String -> PluralForm
     , ordinalForm : Float -> String -> PluralForm
     , allowedCardinalForms : List PluralForm
@@ -588,7 +702,7 @@ stringArgs args text =
             Dict.empty
 
 
-floatArgs : args -> Text args msg -> Dict Name ( Maybe NumberFormat, Float )
+floatArgs : args -> Text args msg -> Dict Name ( Printer Float, Float )
 floatArgs args text =
     case text of
         Texts texts ->
@@ -596,216 +710,178 @@ floatArgs args text =
                 |> List.map (floatArgs args)
                 |> List.foldl Dict.union Dict.empty
 
-        Float maybeNumberFormat _ accessor name ->
-            Dict.singleton name ( maybeNumberFormat, args |> accessor )
-
-        Plural maybeNumberFormat _ _ accessor name _ ->
-            Dict.singleton name ( maybeNumberFormat, args |> accessor )
-
-        _ ->
-            Dict.empty
-
-
-intArgs : args -> Text args msg -> Dict Name Int
-intArgs args text =
-    case text of
-        Texts texts ->
-            texts
-                |> List.map (intArgs args)
-                |> List.foldl Dict.union Dict.empty
-
-        Int _ accessor name ->
-            Dict.singleton name (args |> accessor)
-
-        _ ->
-            Dict.empty
-
-
-selectArgs : args -> Text args msg -> Dict Name Name
-selectArgs args text =
-    case text of
-        Texts texts ->
-            texts
-                |> List.map (selectArgs args)
-                |> List.foldl Dict.union Dict.empty
-
-        Select name _ _ accessor ->
-            args
-                |> accessor
-                |> Tuple.first
-                |> Dict.singleton name
+        Float printer accessor name ->
+            Dict.singleton name ( printer, args |> accessor )
 
         _ ->
             Dict.empty
 
 
 
----- EXPORT
-
-
-toIcu : Translation args msg -> String
-toIcu translation =
-    case translation of
-        Final _ text ->
-            textToIcu Nothing text
-
-        Fallback _ text ->
-            textToIcu Nothing text
-
-
-textToIcu : Maybe ( Name, Maybe NumberFormat ) -> Text args msg -> String
-textToIcu maybeCount text =
-    case text of
-        Texts texts ->
-            texts
-                |> List.map (textToIcu maybeCount)
-                |> String.concat
-
-        Text string ->
-            string
-
-        Node _ name nodeText ->
-            [ "{"
-            , name
-            , ", node, "
-            , "{"
-            , nodeText |> textToIcu maybeCount
-            , "}"
-            ]
-                |> String.concat
-
-        String _ name ->
-            [ "{"
-            , name
-            , "}"
-            ]
-                |> String.concat
-
-        Float maybeNumberFormat _ _ name ->
-            [ "{"
-            , name
-            , ", "
-            , case maybeNumberFormat of
-                Nothing ->
-                    "number"
-
-                Just DecimalFormat ->
-                    "number, decimal"
-
-                Just ScientificFormat ->
-                    "number, scientific"
-
-                Just PercentFormat ->
-                    "number, percent"
-
-                Just CurrencyFormat ->
-                    "number, currency"
-
-                Just AtLeastFormat ->
-                    "number, atLeast"
-            , "}"
-            ]
-                |> String.concat
-
-        Int _ _ name ->
-            [ "{"
-            , name
-            , ", number, integer}"
-            ]
-                |> String.concat
-
-        Select name defaultText cases _ ->
-            [ "{"
-            , name
-            , ", select, "
-            , ([ "other{"
-               , defaultText |> textToIcu maybeCount
-               , "}"
-               ]
-                |> String.concat
-              )
-                :: (cases
-                        |> List.map
-                            (\( caseName, caseText ) ->
-                                [ caseName
-                                , "{"
-                                , caseText |> textToIcu maybeCount
-                                , "}"
-                                ]
-                                    |> String.concat
-                            )
-                   )
-                |> String.join " "
-            , "}"
-            ]
-                |> String.concat
-
-        Plural maybeNumberFormat _ _ _ name allPluralForms ->
-            let
-                pluralFormToIcu ( formName, maybeFormText ) =
-                    case maybeFormText of
-                        Just formText ->
-                            [ formName
-                            , "{"
-                            , formText |> textToIcu (Just ( name, maybeNumberFormat ))
-                            , "}"
-                            ]
-                                |> String.concat
-                                |> Just
-
-                        Nothing ->
-                            Nothing
-            in
-            [ "{"
-            , name
-            , ", plural, "
-            , ([ "other{"
-               , allPluralForms.other
-                    |> textToIcu (Just ( name, maybeNumberFormat ))
-               , "}"
-               ]
-                |> String.concat
-              )
-                :: ([ ( "zero", allPluralForms.zero )
-                    , ( "one", allPluralForms.one )
-                    , ( "two", allPluralForms.two )
-                    , ( "few", allPluralForms.few )
-                    , ( "many", allPluralForms.many )
-                    ]
-                        |> List.filterMap pluralFormToIcu
-                   )
-                |> String.join " "
-            , "}"
-            ]
-                |> String.concat
-
-        Count ->
-            case maybeCount of
-                Just ( countName, maybeNumberFormat ) ->
-                    [ "{"
-                    , countName
-                    , ", "
-                    , case maybeNumberFormat of
-                        Nothing ->
-                            "number"
-
-                        Just DecimalFormat ->
-                            "number, decimal"
-
-                        Just ScientificFormat ->
-                            "number, scientific"
-
-                        Just PercentFormat ->
-                            "number, percent"
-
-                        Just CurrencyFormat ->
-                            "number, currency"
-
-                        Just AtLeastFormat ->
-                            "number, atLeast"
-                    , "}"
-                    ]
-                        |> String.concat
-
-                Nothing ->
-                    "#"
+---- EXPORT TO ICU MESSAGE FORMAT
+--toIcu : Translation args msg -> String
+--toIcu translation =
+--    case translation of
+--        Final _ text ->
+--            textToIcu Nothing text
+--
+--        Fallback _ text ->
+--            textToIcu Nothing text
+--
+--
+--textToIcu : Maybe ( Name, Maybe NumberFormat ) -> Text args msg -> String
+--textToIcu maybeCount text =
+--    case text of
+--        Texts texts ->
+--            texts
+--                |> List.map (textToIcu maybeCount)
+--                |> String.concat
+--
+--        Text string ->
+--            string
+--
+--        Node _ name nodeText ->
+--            [ "{"
+--            , name
+--            , ", node, "
+--            , "{"
+--            , nodeText |> textToIcu maybeCount
+--            , "}"
+--            ]
+--                |> String.concat
+--
+--        String _ name ->
+--            [ "{"
+--            , name
+--            , "}"
+--            ]
+--                |> String.concat
+--
+--        Float maybeNumberFormat _ _ name ->
+--            [ "{"
+--            , name
+--            , ", "
+--            , case maybeNumberFormat of
+--                Nothing ->
+--                    "number"
+--
+--                Just DecimalFormat ->
+--                    "number, decimal"
+--
+--                Just ScientificFormat ->
+--                    "number, scientific"
+--
+--                Just PercentFormat ->
+--                    "number, percent"
+--
+--                Just CurrencyFormat ->
+--                    "number, currency"
+--
+--                Just AtLeastFormat ->
+--                    "number, atLeast"
+--            , "}"
+--            ]
+--                |> String.concat
+--
+--        Int _ _ name ->
+--            [ "{"
+--            , name
+--            , ", number, integer}"
+--            ]
+--                |> String.concat
+--
+--        Select name defaultText cases _ ->
+--            [ "{"
+--            , name
+--            , ", select, "
+--            , ([ "other{"
+--               , defaultText |> textToIcu maybeCount
+--               , "}"
+--               ]
+--                |> String.concat
+--              )
+--                :: (cases
+--                        |> List.map
+--                            (\( caseName, caseText ) ->
+--                                [ caseName
+--                                , "{"
+--                                , caseText |> textToIcu maybeCount
+--                                , "}"
+--                                ]
+--                                    |> String.concat
+--                            )
+--                   )
+--                |> String.join " "
+--            , "}"
+--            ]
+--                |> String.concat
+--
+--        Plural maybeNumberFormat _ _ _ name allPluralForms ->
+--            let
+--                pluralFormToIcu ( formName, maybeFormText ) =
+--                    case maybeFormText of
+--                        Just formText ->
+--                            [ formName
+--                            , "{"
+--                            , formText |> textToIcu (Just ( name, maybeNumberFormat ))
+--                            , "}"
+--                            ]
+--                                |> String.concat
+--                                |> Just
+--
+--                        Nothing ->
+--                            Nothing
+--            in
+--            [ "{"
+--            , name
+--            , ", plural, "
+--            , ([ "other{"
+--               , allPluralForms.other
+--                    |> textToIcu (Just ( name, maybeNumberFormat ))
+--               , "}"
+--               ]
+--                |> String.concat
+--              )
+--                :: ([ ( "zero", allPluralForms.zero )
+--                    , ( "one", allPluralForms.one )
+--                    , ( "two", allPluralForms.two )
+--                    , ( "few", allPluralForms.few )
+--                    , ( "many", allPluralForms.many )
+--                    ]
+--                        |> List.filterMap pluralFormToIcu
+--                   )
+--                |> String.join " "
+--            , "}"
+--            ]
+--                |> String.concat
+--
+--        Count ->
+--            case maybeCount of
+--                Just ( countName, maybeNumberFormat ) ->
+--                    [ "{"
+--                    , countName
+--                    , ", "
+--                    , case maybeNumberFormat of
+--                        Nothing ->
+--                            "number"
+--
+--                        Just DecimalFormat ->
+--                            "number, decimal"
+--
+--                        Just ScientificFormat ->
+--                            "number, scientific"
+--
+--                        Just PercentFormat ->
+--                            "number, percent"
+--
+--                        Just CurrencyFormat ->
+--                            "number, currency"
+--
+--                        Just AtLeastFormat ->
+--                            "number, atLeast"
+--                    , "}"
+--                    ]
+--                        |> String.concat
+--
+--                Nothing ->
+--                    "#"
