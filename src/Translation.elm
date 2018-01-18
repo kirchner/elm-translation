@@ -23,9 +23,12 @@ module Translation
         , float
         , node
         , plural
+        , printer
         , s
         , string
+        , toIcu
         , wrapFloat
+        , wrapper
         )
 
 {-|
@@ -127,7 +130,14 @@ printer =
 
 {-| Sometimes it makes sense to wrap a placeholder in some other `Text`,
 for example when defining helpers for printing units like meter,
-seconds, ...:
+seconds, ....
+-}
+type Wrapper a args msg
+    = Wrapper (List Name) (Arg a args msg -> Arg a args msg)
+
+
+{-| Create a `Wrapper`. The first argument should be a unique
+identifier, the second argument is a placeholder:
 
     unitShortLengthMeterWrapper : Wrapper Float
     unitShortLengthMeterWrapper =
@@ -139,8 +149,9 @@ seconds, ...:
                     ]
 
 -}
-type Wrapper a args msg
-    = Wrapper (List Name) (Arg a args msg -> Arg a args msg)
+wrapper : List Name -> (Arg a args msg -> Arg a args msg) -> Wrapper a args msg
+wrapper =
+    Wrapper
 
 
 {-| -}
@@ -305,8 +316,10 @@ these for formatting units:
         final "distanceInfo" <|
             concat
                 [ "Distance travelled: "
-                , wrapFloat unitShortLengthMeterWrapper <|
-                    float intPrinter .distance "distance"
+                , wrapFloat unitShortLengthMeterWrapper
+                    (float intPrinter)
+                    .distance
+                    "distance"
                 ]
 
     unitShortLengthMeterWrapper : Wrapper Float
@@ -719,169 +732,82 @@ floatArgs args text =
 
 
 ---- EXPORT TO ICU MESSAGE FORMAT
---toIcu : Translation args msg -> String
---toIcu translation =
---    case translation of
---        Final _ text ->
---            textToIcu Nothing text
---
---        Fallback _ text ->
---            textToIcu Nothing text
---
---
---textToIcu : Maybe ( Name, Maybe NumberFormat ) -> Text args msg -> String
---textToIcu maybeCount text =
---    case text of
---        Texts texts ->
---            texts
---                |> List.map (textToIcu maybeCount)
---                |> String.concat
---
---        Text string ->
---            string
---
---        Node _ name nodeText ->
---            [ "{"
---            , name
---            , ", node, "
---            , "{"
---            , nodeText |> textToIcu maybeCount
---            , "}"
---            ]
---                |> String.concat
---
---        String _ name ->
---            [ "{"
---            , name
---            , "}"
---            ]
---                |> String.concat
---
---        Float maybeNumberFormat _ _ name ->
---            [ "{"
---            , name
---            , ", "
---            , case maybeNumberFormat of
---                Nothing ->
---                    "number"
---
---                Just DecimalFormat ->
---                    "number, decimal"
---
---                Just ScientificFormat ->
---                    "number, scientific"
---
---                Just PercentFormat ->
---                    "number, percent"
---
---                Just CurrencyFormat ->
---                    "number, currency"
---
---                Just AtLeastFormat ->
---                    "number, atLeast"
---            , "}"
---            ]
---                |> String.concat
---
---        Int _ _ name ->
---            [ "{"
---            , name
---            , ", number, integer}"
---            ]
---                |> String.concat
---
---        Select name defaultText cases _ ->
---            [ "{"
---            , name
---            , ", select, "
---            , ([ "other{"
---               , defaultText |> textToIcu maybeCount
---               , "}"
---               ]
---                |> String.concat
---              )
---                :: (cases
---                        |> List.map
---                            (\( caseName, caseText ) ->
---                                [ caseName
---                                , "{"
---                                , caseText |> textToIcu maybeCount
---                                , "}"
---                                ]
---                                    |> String.concat
---                            )
---                   )
---                |> String.join " "
---            , "}"
---            ]
---                |> String.concat
---
---        Plural maybeNumberFormat _ _ _ name allPluralForms ->
---            let
---                pluralFormToIcu ( formName, maybeFormText ) =
---                    case maybeFormText of
---                        Just formText ->
---                            [ formName
---                            , "{"
---                            , formText |> textToIcu (Just ( name, maybeNumberFormat ))
---                            , "}"
---                            ]
---                                |> String.concat
---                                |> Just
---
---                        Nothing ->
---                            Nothing
---            in
---            [ "{"
---            , name
---            , ", plural, "
---            , ([ "other{"
---               , allPluralForms.other
---                    |> textToIcu (Just ( name, maybeNumberFormat ))
---               , "}"
---               ]
---                |> String.concat
---              )
---                :: ([ ( "zero", allPluralForms.zero )
---                    , ( "one", allPluralForms.one )
---                    , ( "two", allPluralForms.two )
---                    , ( "few", allPluralForms.few )
---                    , ( "many", allPluralForms.many )
---                    ]
---                        |> List.filterMap pluralFormToIcu
---                   )
---                |> String.join " "
---            , "}"
---            ]
---                |> String.concat
---
---        Count ->
---            case maybeCount of
---                Just ( countName, maybeNumberFormat ) ->
---                    [ "{"
---                    , countName
---                    , ", "
---                    , case maybeNumberFormat of
---                        Nothing ->
---                            "number"
---
---                        Just DecimalFormat ->
---                            "number, decimal"
---
---                        Just ScientificFormat ->
---                            "number, scientific"
---
---                        Just PercentFormat ->
---                            "number, percent"
---
---                        Just CurrencyFormat ->
---                            "number, currency"
---
---                        Just AtLeastFormat ->
---                            "number, atLeast"
---                    , "}"
---                    ]
---                        |> String.concat
---
---                Nothing ->
---                    "#"
+
+
+toIcu : Translation args msg -> String
+toIcu translation =
+    case translation of
+        Final _ text ->
+            textToIcu Nothing text
+
+        Fallback _ text ->
+            textToIcu Nothing text
+
+
+textToIcu : Maybe (Text args msg) -> Text args msg -> String
+textToIcu maybeCount text =
+    case text of
+        Texts texts ->
+            texts
+                |> List.map (textToIcu maybeCount)
+                |> String.concat
+
+        Verbatim string ->
+            string
+
+        String _ name ->
+            "{" ++ name ++ "}"
+
+        Node _ name nodeText ->
+            [ "{"
+            , name
+            , ", node, {"
+            , nodeText |> textToIcu maybeCount
+            , "}}"
+            ]
+                |> String.concat
+
+        Float (Printer printerNames _) _ name ->
+            [ "{"
+            , [ [ name
+                , "number"
+                ]
+              , printerNames
+              ]
+                |> List.concat
+                |> String.join ", "
+            , "}"
+            ]
+                |> String.concat
+
+        WrapFloat (Wrapper wrapperNames wrapper) arg accessor name ->
+            wrapper arg accessor name
+                |> textToIcu Nothing
+
+        Plural _ arg _ name allPluralForms ->
+            let
+                pluralFormToIcu form text =
+                    form ++ "{" ++ textToIcu Nothing text ++ "}"
+            in
+            [ "{"
+            , name
+            , ", plural, "
+            , [ ( "other", Just allPluralForms.other )
+              , ( "zero", allPluralForms.zero )
+              , ( "one", allPluralForms.one )
+              , ( "two", allPluralForms.two )
+              , ( "few", allPluralForms.few )
+              , ( "many", allPluralForms.many )
+              ]
+                |> List.filterMap
+                    (\( form, maybeText ) ->
+                        maybeText
+                            |> Maybe.map (pluralFormToIcu form)
+                    )
+                |> String.join " "
+            , "}"
+            ]
+                |> String.concat
+
+        Count ->
+            "#"
