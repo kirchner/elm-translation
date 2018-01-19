@@ -10,6 +10,7 @@ module Translation
             , Two
             , Zero
             )
+        , Printer
         , Text
         , Translation
         , asNodes
@@ -30,7 +31,6 @@ module Translation
         , string
         , time
         , toIcu
-        , wrapper
         )
 
 {-|
@@ -42,20 +42,22 @@ module Translation
 @docs Name
 
 
+# Printing `Translation`s
+
+@docs asString, asStringWith, asNodes
+
+
 # Creating `Text`'s
 
 @docs s, concat, string, node
 
-@docs list, delimited, wrapper
+@docs Printer, printer
 
-@docs float, date, time, printer
+@docs list, delimited
+
+@docs float, date, time
 
 @docs plural, PluralForm, AllPluralForms, count
-
-
-# Printing `Translation`s
-
-@docs asString, asStringWith, asNodes
 
 
 # Exporting `Translation`s
@@ -101,17 +103,17 @@ pluralization is possible. There are several functions for creating
 type Text args msg
     = Text String
     | Texts (List (Text args msg))
-      -- with wrappers
-    | List (Wrapper (List (Text args msg)) args msg) (List (Text args msg))
-    | Delimited (Wrapper (Text args msg) args msg) (Text args msg)
+      -- with printers
+    | List (Printer (List (Text args msg)) args msg) (List (Text args msg))
+    | Delimited (Printer (Text args msg) args msg) (Text args msg)
       -- with placeholders
     | String (Placeholder String args)
     | Node (Placeholder (List (Node msg) -> Node msg) args) (Text args msg)
       -- with printers and placeholders
-    | Float (Printer Float) (Placeholder Float args)
-    | Date (Printer Date) (Placeholder Date args)
-    | Time (Printer Time) (Placeholder Time args)
-    | Plural (Float -> String -> PluralForm) (Printer Float) (Placeholder Float args) (AllPluralForms args msg)
+    | Float (Printer Float args msg) (Placeholder Float args)
+    | Date (Printer Date args msg) (Placeholder Date args)
+    | Time (Printer Time args msg) (Placeholder Time args)
+    | Plural (Float -> String -> PluralForm) (Printer Float args msg) (Placeholder Float args) (AllPluralForms args msg)
       -- misc
     | Count
 
@@ -121,16 +123,11 @@ type Placeholder a args
     = Placeholder (args -> a) Name
 
 
-{-| When printing placeholders which are not `String`s we need to know
-how to turn them into `String`s. We do this by providing a `Printer`.
+{-| Some `Text`s need to know how to convert placeholders into `Text`.
+We do this by providing a `Printer`.
 -}
-type Printer a
-    = Printer (List Name) (a -> String)
-
-
-{-| -}
-type Wrapper a args msg
-    = Wrapper (List Name) (a -> Text args msg)
+type Printer a args msg
+    = Printer (List Name) (a -> Text args msg)
 
 
 {-| -}
@@ -155,24 +152,20 @@ type alias AllPluralForms args msg =
 
 
 {-| Create a `Printer`. The first argument should be a unique
-identifier, the second argument is the actual "printer":
+identifier, the second argument is the actual "printer". You can lift
+`toString` to a printer:
 
-    stringify : Printer a
+    stringify : Printer a args msg
     stringify =
-        printer [ "stringify" ] toString
+        printer [ "stringify" ] <|
+            \a ->
+                s (toString a)
 
--}
-printer : List Name -> (a -> String) -> Printer a
-printer =
-    Printer
+A printer which adds quotation marks could look like this:
 
-
-{-| Create a `Wrapper`. The first argument should be a unique
-identifier. For a example, a wrapper could add quotes:
-
-    quote : Wrapper (Text args msg) args msg
+    quote : Printer (Text args msg) args msg
     quote =
-        wrapper [ "quotes", "outer" ] <|
+        printer [ "quotes", "outer" ] <|
             \text ->
                 concat
                     [ s "\""
@@ -180,11 +173,11 @@ identifier. For a example, a wrapper could add quotes:
                     , s "\""
                     ]
 
-Or it could verbalize a list:
+Or you can create a list printer:
 
-    listAnd : Wrapper (List (Text args msg)) args msg
+    listAnd : Printer (List (Text args msg)) args msg
     listAnd =
-        wrapper [ "list", "and" ] <|
+        printer [ "list", "and" ] <|
             \texts ->
                 case List.reverse texts of
                     [] ->
@@ -205,9 +198,9 @@ Or it could verbalize a list:
                             |> concat
 
 -}
-wrapper : List Name -> (a -> Text args msg) -> Wrapper a args msg
-wrapper =
-    Wrapper
+printer : List Name -> (a -> Text args msg) -> Printer a args msg
+printer =
+    Printer
 
 
 
@@ -313,7 +306,7 @@ node accessor name =
 
 
 {-| -}
-list : Wrapper (List (Text args msg)) args msg -> List (Text args msg) -> Text args msg
+list : Printer (List (Text args msg)) args msg -> List (Text args msg) -> Text args msg
 list =
     List
 
@@ -334,7 +327,7 @@ text in the right symbols:
     quotedOuter : Text args msg -> Text args msg
     quotedOuter =
         delimited <|
-            wrapper [ "quotes", "outer" ] <|
+            printer [ "quotes", "outer" ] <|
                 \text ->
                     concat
                         [ s "\""
@@ -343,7 +336,7 @@ text in the right symbols:
                         ]
 
 -}
-delimited : Wrapper (Text args msg) args msg -> Text args msg -> Text args msg
+delimited : Printer (Text args msg) args msg -> Text args msg -> Text args msg
 delimited =
     Delimited
 
@@ -367,6 +360,7 @@ a `String`:
                 float
                     |> floor
                     |> toString
+                    |> s
 
 **Note:** The package `kirchner/elm-cldr` exposes several of these
 placeholder functions for all the number formats and locales which are
@@ -374,19 +368,19 @@ defined in the [CLDR](http://cldr.unicode.org). You most likely want to
 use one of those.
 
 -}
-float : Printer Float -> (args -> Float) -> Name -> Text args msg
+float : Printer Float args msg -> (args -> Float) -> Name -> Text args msg
 float printer accessor name =
     Float printer (Placeholder accessor name)
 
 
 {-| -}
-date : Printer Date -> (args -> Date) -> Name -> Text args msg
+date : Printer Date args msg -> (args -> Date) -> Name -> Text args msg
 date printer accessor name =
     Date printer (Placeholder accessor name)
 
 
 {-| -}
-time : Printer Time -> (args -> Time) -> Name -> Text args msg
+time : Printer Time args msg -> (args -> Time) -> Name -> Text args msg
 time printer accessor name =
     Time printer (Placeholder accessor name)
 
@@ -394,7 +388,7 @@ time printer accessor name =
 {-| -}
 plural :
     (Float -> String -> PluralForm)
-    -> Printer Float
+    -> Printer Float args msg
     -> (args -> Float)
     -> Name
     -> AllPluralForms args msg
@@ -468,30 +462,33 @@ printText maybeCount args text =
         Node (Placeholder accessor _) subText ->
             printText maybeCount args subText
 
-        List (Wrapper _ wrapper) subTexts ->
+        List (Printer _ printer) subTexts ->
             subTexts
-                |> wrapper
+                |> printer
                 |> printText maybeCount args
 
-        Delimited (Wrapper _ wrapper) subText ->
+        Delimited (Printer _ printer) subText ->
             subText
-                |> wrapper
+                |> printer
                 |> printText maybeCount args
 
-        Float (Printer _ print) (Placeholder accessor _) ->
+        Float (Printer _ printer) (Placeholder accessor _) ->
             args
                 |> accessor
-                |> print
+                |> printer
+                |> printText maybeCount args
 
-        Date (Printer _ print) (Placeholder accessor _) ->
+        Date (Printer _ printer) (Placeholder accessor _) ->
             args
                 |> accessor
-                |> print
+                |> printer
+                |> printText maybeCount args
 
-        Time (Printer _ print) (Placeholder accessor _) ->
+        Time (Printer _ printer) (Placeholder accessor _) ->
             args
                 |> accessor
-                |> print
+                |> printer
+                |> printText maybeCount args
 
         Plural toPluralForm (Printer _ printer) (Placeholder accessor _) allPluralForms ->
             let
@@ -499,6 +496,7 @@ printText maybeCount args text =
                     args
                         |> accessor
                         |> printer
+                        |> printText Nothing args
 
                 pluralForm =
                     toPluralForm (accessor args) count
@@ -538,7 +536,7 @@ printText maybeCount args text =
                     ""
 
 
-textToNodes : Maybe String -> args -> Text args msg -> List (Node msg)
+textToNodes : Maybe (Text args msg) -> args -> Text args msg -> List (Node msg)
 textToNodes maybeCount args text =
     case text of
         Text string ->
@@ -561,56 +559,59 @@ textToNodes maybeCount args text =
                 |> accessor args
             ]
 
-        List (Wrapper _ wrapper) subTexts ->
+        List (Printer _ printer) subTexts ->
             subTexts
-                |> wrapper
+                |> printer
                 |> textToNodes maybeCount args
 
-        Delimited (Wrapper _ wrapper) subText ->
+        Delimited (Printer _ printer) subText ->
             subText
-                |> wrapper
+                |> printer
                 |> textToNodes maybeCount args
 
-        Float (Printer _ print) (Placeholder accessor _) ->
-            [ args
+        Float (Printer _ printer) (Placeholder accessor _) ->
+            args
                 |> accessor
-                |> print
-                |> VirtualDom.text
-            ]
+                |> printer
+                |> textToNodes maybeCount args
 
-        Date (Printer _ print) (Placeholder accessor _) ->
-            [ args
+        Date (Printer _ printer) (Placeholder accessor _) ->
+            args
                 |> accessor
-                |> print
-                |> VirtualDom.text
-            ]
+                |> printer
+                |> textToNodes maybeCount args
 
-        Time (Printer _ print) (Placeholder accessor _) ->
-            [ args
+        Time (Printer _ printer) (Placeholder accessor _) ->
+            args
                 |> accessor
-                |> print
-                |> VirtualDom.text
-            ]
+                |> printer
+                |> textToNodes maybeCount args
 
         Plural toPluralForm (Printer _ printer) (Placeholder accessor _) allPluralForms ->
             let
-                count =
+                countAsString =
+                    args
+                        |> accessor
+                        |> printer
+                        |> printText Nothing args
+
+                countAsText =
                     args
                         |> accessor
                         |> printer
 
                 pluralForm =
-                    toPluralForm (accessor args) count
+                    toPluralForm (accessor args) countAsString
 
                 printMaybeForm form =
                     form
                         |> Maybe.withDefault allPluralForms.other
-                        |> textToNodes (Just count) args
+                        |> textToNodes (Just countAsText) args
             in
             case pluralForm of
                 Other ->
                     allPluralForms.other
-                        |> textToNodes (Just count) args
+                        |> textToNodes (Just countAsText) args
 
                 Zero ->
                     printMaybeForm allPluralForms.zero
@@ -630,7 +631,8 @@ textToNodes maybeCount args text =
         Count ->
             case maybeCount of
                 Just count ->
-                    [ VirtualDom.text count ]
+                    count
+                        |> textToNodes Nothing args
 
                 Nothing ->
                     -- TODO: should we prevent this via types?
@@ -840,7 +842,7 @@ textToIcu maybeCount text =
                 |> String.concat
                 |> wrap
 
-        List (Wrapper wrapperNames _) subTexts ->
+        List (Printer wrapperNames _) subTexts ->
             [ "list"
             , wrapperNames
                 |> String.join ", "
@@ -852,7 +854,7 @@ textToIcu maybeCount text =
                 |> String.join ", "
                 |> wrap
 
-        Delimited (Wrapper wrapperNames _) subText ->
+        Delimited (Printer wrapperNames _) subText ->
             [ "delimited"
             , wrapperNames
                 |> String.join ", "

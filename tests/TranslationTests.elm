@@ -45,14 +45,14 @@ toIcuTest =
         , fuzz2 fuzzName fuzzName "a float with an unnamed printer" <|
             \name placeholder ->
                 (final name <|
-                    float (printer [] toString) .placeholder placeholder
+                    float (printer [] (s << toString)) .placeholder placeholder
                 )
                     |> toIcu
                     |> Expect.equal ("{" ++ placeholder ++ ", number}")
         , fuzz4 fuzzName fuzzName fuzzName (Fuzz.list fuzzName) "a float with a named printer" <|
             \name placeholder printerName printerNames ->
                 (final name <|
-                    float (printer (printerName :: printerNames) toString) .placeholder placeholder
+                    float (printer (printerName :: printerNames) (s << toString)) .placeholder placeholder
                 )
                     |> toIcu
                     |> Expect.equal
@@ -131,7 +131,9 @@ toIcuTest =
 
 
 floatToString =
-    printer [] toString
+    printer [] <|
+        \float ->
+            s (toString float)
 
 
 
