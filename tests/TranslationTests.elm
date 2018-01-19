@@ -65,7 +65,7 @@ toIcuTest =
         , fuzz3 fuzzName fuzzName Fuzz.string "a plural with only one form" <|
             \name placeholder text ->
                 (final name <|
-                    plural (\_ _ -> Other) floatToString .placeholder placeholder <|
+                    plural floatToString (\_ _ -> Other) .placeholder placeholder <|
                         { other = s text
                         , zero = Nothing
                         , one = Nothing
@@ -88,7 +88,7 @@ toIcuTest =
                             ]
                 in
                 (final name <|
-                    plural (\_ _ -> Other) floatToString .placeholder placeholder <|
+                    plural floatToString (\_ _ -> Other) .placeholder placeholder <|
                         { other = wrapCount allPluralForms.other
                         , zero = Just (wrapCount allPluralForms.zero)
                         , one = Just (wrapCount allPluralForms.one)

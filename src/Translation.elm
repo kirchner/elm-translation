@@ -49,15 +49,27 @@ module Translation
 
 # Creating `Text`'s
 
-@docs s, concat, string, node
+
+## Primitives
+
+@docs s, concat, node
+
+
+## Wrappers
+
+@docs delimited, list
+
+
+## Placeholders
+
+@docs string, float, date, time
+
+@docs plural, count, PluralForm, AllPluralForms
+
+
+# Printers
 
 @docs Printer, printer
-
-@docs list, delimited
-
-@docs float, date, time
-
-@docs plural, PluralForm, AllPluralForms, count
 
 
 # Exporting `Translation`s
@@ -97,15 +109,15 @@ type Translation args msg
 {-| This is the building block for your translations. `Text`s can
 either be just `String`s or placeholders for `String`s, `Float`s,
 `Date`s, ..., along with rules for how to print these. Also
-pluralization is possible. There are several functions for creating
-`Text`s, further down.
+pluralization is possible. There are several functions for creating and
+manipulating `Text`s, further down.
 -}
 type Text args msg
     = Text String
     | Texts (List (Text args msg))
       -- with printers
-    | List (Printer (List (Text args msg)) args msg) (List (Text args msg))
     | Delimited (Printer (Text args msg) args msg) (Text args msg)
+    | List (Printer (List (Text args msg)) args msg) (List (Text args msg))
       -- with placeholders
     | String (Placeholder String args)
     | Node (Placeholder (List (Node msg) -> Node msg) args) (Text args msg)
@@ -113,7 +125,7 @@ type Text args msg
     | Float (Printer Float args msg) (Placeholder Float args)
     | Date (Printer Date args msg) (Placeholder Date args)
     | Time (Printer Time args msg) (Placeholder Time args)
-    | Plural (Float -> String -> PluralForm) (Printer Float args msg) (Placeholder Float args) (AllPluralForms args msg)
+    | Plural (Printer Float args msg) (Float -> String -> PluralForm) (Placeholder Float args) (AllPluralForms args msg)
       -- misc
     | Count
 
@@ -130,7 +142,9 @@ type Printer a args msg
     = Printer (List Name) (a -> Text args msg)
 
 
-{-| -}
+{-| This type represents all 6 plural forms defined by the
+[CLDR](http://cldr.unicode.org).
+-}
 type PluralForm
     = Other
     | Zero
@@ -152,50 +166,14 @@ type alias AllPluralForms args msg =
 
 
 {-| Create a `Printer`. The first argument should be a unique
-identifier, the second argument is the actual "printer". You can lift
-`toString` to a printer:
+identifier, the second argument is the actual "printer". For example,
+you can lift `toString` to a printer:
 
     stringify : Printer a args msg
     stringify =
         printer [ "stringify" ] <|
             \a ->
                 s (toString a)
-
-A printer which adds quotation marks could look like this:
-
-    quote : Printer (Text args msg) args msg
-    quote =
-        printer [ "quotes", "outer" ] <|
-            \text ->
-                concat
-                    [ s "\""
-                    , text
-                    , s "\""
-                    ]
-
-Or you can create a list printer:
-
-    listAnd : Printer (List (Text args msg)) args msg
-    listAnd =
-        printer [ "list", "and" ] <|
-            \texts ->
-                case List.reverse texts of
-                    [] ->
-                        s ""
-
-                    lastText :: [] ->
-                        lastText
-
-                    lastText :: rest ->
-                        [ [ lastText
-                          , s " and "
-                          ]
-                        , rest
-                            |> List.intersperse (s ", ")
-                        ]
-                            |> List.concat
-                            |> List.reverse
-                            |> concat
 
 -}
 printer : List Name -> (a -> Text args msg) -> Printer a args msg
@@ -222,12 +200,12 @@ final =
     Final
 
 
-{-| Create a "fallback" translation. This works as `final`, but when
-running
+{-| Create a "fallback" translation. This works just as `final`, but
+when running
 
     $ elm-translations generate-json
 
-it will **not** be exported.
+the translation will **not** be exported.
 
 -}
 fallback : Name -> Text args msg -> Translation args msg
@@ -271,7 +249,7 @@ concat =
 
 {-| Create a placeholder for a `String`:
 
-    personalGreeting : Translation { name : String } msg
+    personalGreeting : Translation { args | name : String } msg
     personalGreeting =
         final "greeting" <|
             concat
@@ -289,7 +267,7 @@ string accessor name =
 {-| When using `asNodes` on a `Translation`, this `Text` will become
 a node with a `Node.text` subnode containing the provided `Text`:
 
-    question : Translation args msg
+    question : Translation { args | strong : List (Node msg) -> Node msg) } msg
     question =
         final "question" <|
             concat
@@ -305,35 +283,33 @@ node accessor name =
     Node (Placeholder accessor name)
 
 
-{-| -}
-list : Printer (List (Text args msg)) args msg -> List (Text args msg) -> Text args msg
-list =
-    List
+{-| With this function you can create quotation helpers:
 
+    quote : Text args msg -> Text args msg
+    quote =
+        delimited quotePrinter
 
-{-| You usually don't want to think about what quoation marks should be
-used in the current language. This function let's you define helper wrap
-text in the right symbols:
+    quotePrinter : Printer (Text args msg) args msg
+    quotePrinter =
+        printer [ "quotes", "outer" ] <|
+            \text ->
+                concat
+                    [ s "‟"
+                    , text
+                    , s "”"
+                    ]
 
-    containingQuotes : Translation args msg
-    containingQuotes =
-        final "containingQuotes" <|
+    assumption : Translation args msg
+    assumption =
+        final "assumption" <|
             concat
-                [ s "Then they said: "
-                , quotedOuter <|
-                    s "What is going on?"
+                [ s "You may ask yourself: "
+                , quote <|
+                    s "What is this all for?"
                 ]
 
-    quotedOuter : Text args msg -> Text args msg
-    quotedOuter =
-        delimited <|
-            printer [ "quotes", "outer" ] <|
-                \text ->
-                    concat
-                        [ s "\""
-                        , text
-                        , s "\""
-                        ]
+Take a look at `kirchner/elm-cldr` which defines such helpers for all
+languages contained in the [CLDR](http://cldr.unicode.org).
 
 -}
 delimited : Printer (Text args msg) args msg -> Text args msg -> Text args msg
@@ -341,9 +317,61 @@ delimited =
     Delimited
 
 
+{-| Use this to build helpers if you want to turn a list like `[
+"Alice", "Bob", "Cindy" ]` into `"Alice, Bob and Cindy"`. So basically,
+this is like `concat` but you can specify how to actually join the
+`Text`s:
+
+    and : List (Text args msg) -> Text args msg
+    and =
+        list andPrinter
+
+    andPrinter : Printer (List (Text args msg)) args msg
+    andPrinter =
+        printer [ "list", "and" ] <|
+            \texts ->
+                case List.reverse texts of
+                    [] ->
+                        s ""
+
+                    lastText :: [] ->
+                        lastText
+
+                    lastText :: rest ->
+                        [ [ lastText
+                          , s " and "
+                          ]
+                        , rest
+                            |> List.intersperse (s ", ")
+                        ]
+                            |> List.concat
+                            |> List.reverse
+                            |> concat
+
+    membersInfo : Translation args msg
+    membersInfo =
+        final "membersInfo" <|
+            concat
+                [ s "These are all our members: "
+                , and
+                    [ s "Alice"
+                    , s "Bob"
+                    , s "Cindy"
+                    ]
+                ]
+
+Take a look at `kirchner/elm-cldr` which defines such helpers for all
+languages contained in the [CLDR](http://cldr.unicode.org).
+
+-}
+list : Printer (List (Text args msg)) args msg -> List (Text args msg) -> Text args msg
+list =
+    List
+
+
 {-| Create a placeholder for a `Float`. You also need to provide
 a `Printer Float`, so we know how to turn the actual value into
-a `String`:
+a `Text`:
 
     mailboxInfo : Translation { args | mailCount : Float } msg
     mailboxInfo =
@@ -373,31 +401,101 @@ float printer accessor name =
     Float printer (Placeholder accessor name)
 
 
-{-| -}
+{-| Like `float` but for `Date` values.
+-}
 date : Printer Date args msg -> (args -> Date) -> Name -> Text args msg
 date printer accessor name =
     Date printer (Placeholder accessor name)
 
 
-{-| -}
+{-| Like `float` but for `Time` values.
+-}
 time : Printer Time args msg -> (args -> Time) -> Name -> Text args msg
 time printer accessor name =
     Time printer (Placeholder accessor name)
 
 
-{-| -}
+{-| This function helps you if you need to choose different variants of
+your translation depending on some numeric value. For example `"1
+second"` vs. `"2 seconds"` vs. `"1.0 seconds"`. You have to provide
+a printer for the number and a function which decides what plural form
+should be choosen depending on the numeric value and its printed
+representation. You can use `count` within a plural text to insert the
+actual printed numerical value.
+
+    newMailsInfo : Translation { args | count : Float } msg
+    newMailsInfo =
+        final "newMailsInfo" <|
+            plural intPrinter toPluralForm .count "count" <|
+                { other =
+                    concat
+                        [ s "You have "
+                        , count
+                        , s " new emails."
+                        ]
+                , zero = Nothing
+                , one =
+                    Just <|
+                        concat
+                            [ s "You have "
+                            , count
+                            , s " new email."
+                            ]
+                , two = Nothing
+                , few = Nothing
+                , many = Nothing
+                }
+
+    toPluralForm : Float -> String -> PluralForm
+    toPluralForm float _ =
+        if float == 1 then
+            One
+        else
+            Other
+
+Take a look at `kirchner/elm-cldr`. You will find pluralization
+functions which are based on the pluralization rules of the
+[CLDR](http://cldr.unicode.org). For example, a German version of the
+above translation would look like this:
+
+    import Cldr.De exposing (cardinal)
+
+    newMailsInfo : Translation { args | count : Float } msg
+    newMailsInfo =
+        final "newMailsInfo" <|
+            cardinal intPrinter .count "count" <|
+                { other =
+                    concat
+                        [ s "Du hast "
+                        , count
+                        , s " neue Emails."
+                        ]
+                , one =
+                    concat
+                        [ s "Du hast "
+                        , count
+                        , s " neue Email."
+                        ]
+                }
+
+So you never have to worry that you missed some pluralization form (or
+defined forms which are not necessary)!
+
+-}
 plural :
-    (Float -> String -> PluralForm)
-    -> Printer Float args msg
+    Printer Float args msg
+    -> (Float -> String -> PluralForm)
     -> (args -> Float)
     -> Name
     -> AllPluralForms args msg
     -> Text args msg
-plural toPluralForm printer accessor name =
-    Plural toPluralForm printer (Placeholder accessor name)
+plural printer toPluralForm accessor name =
+    Plural printer toPluralForm (Placeholder accessor name)
 
 
-{-| -}
+{-| Used within a form of a plural text, this will insert the numerical
+value using the printer which was provided to `plural`.
+-}
 count : Text args msg
 count =
     Count
@@ -429,7 +527,7 @@ asString translation =
 
 
 {-| Turn a `Translation` into a list of dom nodes. Take a look at the
-package documentation for examples.
+package documentation for examples of why this is useful.
 -}
 asNodes : args -> Translation args msg -> List (Node msg)
 asNodes args translation =
@@ -462,13 +560,13 @@ printText maybeCount args text =
         Node (Placeholder accessor _) subText ->
             printText maybeCount args subText
 
-        List (Printer _ printer) subTexts ->
-            subTexts
+        Delimited (Printer _ printer) subText ->
+            subText
                 |> printer
                 |> printText maybeCount args
 
-        Delimited (Printer _ printer) subText ->
-            subText
+        List (Printer _ printer) subTexts ->
+            subTexts
                 |> printer
                 |> printText maybeCount args
 
@@ -490,7 +588,7 @@ printText maybeCount args text =
                 |> printer
                 |> printText maybeCount args
 
-        Plural toPluralForm (Printer _ printer) (Placeholder accessor _) allPluralForms ->
+        Plural (Printer _ printer) toPluralForm (Placeholder accessor _) allPluralForms ->
             let
                 count =
                     args
@@ -559,13 +657,13 @@ textToNodes maybeCount args text =
                 |> accessor args
             ]
 
-        List (Printer _ printer) subTexts ->
-            subTexts
+        Delimited (Printer _ printer) subText ->
+            subText
                 |> printer
                 |> textToNodes maybeCount args
 
-        Delimited (Printer _ printer) subText ->
-            subText
+        List (Printer _ printer) subTexts ->
+            subTexts
                 |> printer
                 |> textToNodes maybeCount args
 
@@ -587,7 +685,7 @@ textToNodes maybeCount args text =
                 |> printer
                 |> textToNodes maybeCount args
 
-        Plural toPluralForm (Printer _ printer) (Placeholder accessor _) allPluralForms ->
+        Plural (Printer _ printer) toPluralForm (Placeholder accessor _) allPluralForms ->
             let
                 countAsString =
                     args
@@ -803,7 +901,16 @@ textToNodes maybeCount args text =
 ---- EXPORT TO ICU MESSAGE FORMAT
 
 
-{-| -}
+{-| Turn a `Translation` into the (somewhat extended) [ICU Message
+Format](http://icu-project.org/apiref/icu4j/com/ibm/icu/text/MessageFormat.html).
+You probably never need this. We use this in
+`kirchner/elm-translation-runner` to export `Translation`s to JSON
+translation files.
+
+**Note:** This only works if you provide unique `Name`s for the
+different placeholders and translations.
+
+-}
 toIcu : Translation args msg -> String
 toIcu translation =
     case translation of
@@ -842,6 +949,17 @@ textToIcu maybeCount text =
                 |> String.concat
                 |> wrap
 
+        Delimited (Printer wrapperNames _) subText ->
+            [ "delimited"
+            , wrapperNames
+                |> String.join ", "
+            , subText
+                |> textToIcu maybeCount
+                |> wrap
+            ]
+                |> String.join ", "
+                |> wrap
+
         List (Printer wrapperNames _) subTexts ->
             [ "list"
             , wrapperNames
@@ -849,17 +967,6 @@ textToIcu maybeCount text =
             , subTexts
                 |> List.map (textToIcu maybeCount)
                 |> String.join " "
-                |> wrap
-            ]
-                |> String.join ", "
-                |> wrap
-
-        Delimited (Printer wrapperNames _) subText ->
-            [ "delimited"
-            , wrapperNames
-                |> String.join ", "
-            , subText
-                |> textToIcu maybeCount
                 |> wrap
             ]
                 |> String.join ", "
@@ -880,7 +987,7 @@ textToIcu maybeCount text =
                 |> String.join ", "
                 |> wrap
 
-        Plural _ (Printer printerNames _) (Placeholder _ name) allPluralForms ->
+        Plural (Printer printerNames _) _ (Placeholder _ name) allPluralForms ->
             let
                 pluralFormToIcu form text =
                     form ++ wrap (textToIcu Nothing text)
