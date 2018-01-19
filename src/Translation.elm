@@ -1,7 +1,6 @@
 module Translation
     exposing
         ( AllPluralForms
-        , Arg
         , Name
         , PluralForm
             ( Few
@@ -18,16 +17,19 @@ module Translation
         , asStringWith
         , concat
         , count
+        , date
+        , delimited
         , fallback
         , final
         , float
+        , list
         , node
         , plural
         , printer
         , s
         , string
+        , time
         , toIcu
-        , wrapFloat
         , wrapper
         )
 
@@ -37,14 +39,16 @@ module Translation
 
 @docs final, fallback
 
-@docs Name, Arg
+@docs Name
 
 
 # Creating `Text`'s
 
 @docs s, concat, string, node
 
-@docs float, wrapFloat
+@docs list, delimited, wrapper
+
+@docs float, date, time, printer
 
 @docs plural, PluralForm, AllPluralForms, count
 
@@ -53,11 +57,23 @@ module Translation
 
 @docs asString, asStringWith, asNodes
 
+
+# Exporting `Translation`s
+
+@docs toIcu
+
 -}
 
+import Date exposing (Date)
 import Dict exposing (Dict)
 import Set
+import Time exposing (Time)
 import VirtualDom exposing (Node)
+
+
+{-| -}
+type alias Name =
+    String
 
 
 {-| A `Translation` is a piece of localized text in a specific language.
@@ -83,29 +99,26 @@ pluralization is possible. There are several functions for creating
 `Text`s, further down.
 -}
 type Text args msg
-    = Texts (List (Text args msg))
-    | Verbatim String
-    | String (args -> String) Name
-    | Node (args -> (List (Node msg) -> Node msg)) Name (Text args msg)
-    | Float (Printer Float) (args -> Float) Name
-    | WrapFloat (Wrapper Float args msg) (Arg Float args msg) (args -> Float) Name
-    | Plural (Float -> String -> PluralForm) (Arg Float args msg) (args -> Float) Name (AllPluralForms args msg)
+    = Text String
+    | Texts (List (Text args msg))
+      -- with wrappers
+    | List (Wrapper (List (Text args msg)) args msg) (List (Text args msg))
+    | Delimited (Wrapper (Text args msg) args msg) (Text args msg)
+      -- with placeholders
+    | String (Placeholder String args)
+    | Node (Placeholder (List (Node msg) -> Node msg) args) (Text args msg)
+      -- with printers and placeholders
+    | Float (Printer Float) (Placeholder Float args)
+    | Date (Printer Date) (Placeholder Date args)
+    | Time (Printer Time) (Placeholder Time args)
+    | Plural (Float -> String -> PluralForm) (Printer Float) (Placeholder Float args) (AllPluralForms args msg)
+      -- misc
     | Count
 
 
 {-| -}
-type alias Name =
-    String
-
-
-{-| This is a convenience alias to make the type signatures more
-concise. `args` will be a record type specifying which placeholder one
-has to provide when printing the translation. This is done by
-providing an accessor function `args -> a`. The `Name` should be
-a sensefull `String` representation of this accessor.
--}
-type alias Arg a args msg =
-    (args -> a) -> Name -> Text args msg
+type Placeholder a args
+    = Placeholder (args -> a) Name
 
 
 {-| When printing placeholders which are not `String`s we need to know
@@ -115,43 +128,9 @@ type Printer a
     = Printer (List Name) (a -> String)
 
 
-{-| Create a `Printer`. The first argument should be a unique
-identifier, the second argument is the actual "printer":
-
-    stringify : Printer a
-    stringify =
-        printer [ "stringify" ] toString
-
--}
-printer : List Name -> (a -> String) -> Printer a
-printer =
-    Printer
-
-
-{-| Sometimes it makes sense to wrap a placeholder in some other `Text`,
-for example when defining helpers for printing units like meter,
-seconds, ....
--}
+{-| -}
 type Wrapper a args msg
-    = Wrapper (List Name) (Arg a args msg -> Arg a args msg)
-
-
-{-| Create a `Wrapper`. The first argument should be a unique
-identifier, the second argument is a placeholder:
-
-    unitShortLengthMeterWrapper : Wrapper Float
-    unitShortLengthMeterWrapper =
-        wrapper [ "unit", "short", "length-meter" ] <|
-            \wrapped accessor name ->
-                concat
-                    [ wrapped accessor name
-                    , s " m"
-                    ]
-
--}
-wrapper : List Name -> (Arg a args msg -> Arg a args msg) -> Wrapper a args msg
-wrapper =
-    Wrapper
+    = Wrapper (List Name) (a -> Text args msg)
 
 
 {-| -}
@@ -173,6 +152,62 @@ type alias AllPluralForms args msg =
     , few : Maybe (Text args msg)
     , many : Maybe (Text args msg)
     }
+
+
+{-| Create a `Printer`. The first argument should be a unique
+identifier, the second argument is the actual "printer":
+
+    stringify : Printer a
+    stringify =
+        printer [ "stringify" ] toString
+
+-}
+printer : List Name -> (a -> String) -> Printer a
+printer =
+    Printer
+
+
+{-| Create a `Wrapper`. The first argument should be a unique
+identifier. For a example, a wrapper could add quotes:
+
+    quote : Wrapper (Text args msg) args msg
+    quote =
+        wrapper [ "quotes", "outer" ] <|
+            \text ->
+                concat
+                    [ s "\""
+                    , text
+                    , s "\""
+                    ]
+
+Or it could verbalize a list:
+
+    listAnd : Wrapper (List (Text args msg)) args msg
+    listAnd =
+        wrapper [ "list", "and" ] <|
+            \texts ->
+                case List.reverse texts of
+                    [] ->
+                        s ""
+
+                    lastText :: [] ->
+                        lastText
+
+                    lastText :: rest ->
+                        [ [ lastText
+                          , s " and "
+                          ]
+                        , rest
+                            |> List.intersperse (s ", ")
+                        ]
+                            |> List.concat
+                            |> List.reverse
+                            |> concat
+
+-}
+wrapper : List Name -> (a -> Text args msg) -> Wrapper a args msg
+wrapper =
+    Wrapper
 
 
 
@@ -221,7 +256,7 @@ fallback =
 -}
 s : String -> Text args msg
 s =
-    Verbatim
+    Text
 
 
 {-| Join a list of `Text`s:
@@ -241,6 +276,23 @@ concat =
     Texts
 
 
+{-| Create a placeholder for a `String`:
+
+    personalGreeting : Translation { name : String } msg
+    personalGreeting =
+        final "greeting" <|
+            concat
+                [ "Hello, "
+                , string .name "name"
+                , "!"
+                ]
+
+-}
+string : (args -> String) -> Name -> Text args msg
+string accessor name =
+    String (Placeholder accessor name)
+
+
 {-| When using `asNodes` on a `Translation`, this `Text` will become
 a node with a `Node.text` subnode containing the provided `Text`:
 
@@ -256,25 +308,44 @@ a node with a `Node.text` subnode containing the provided `Text`:
 
 -}
 node : (args -> (List (Node msg) -> Node msg)) -> Name -> Text args msg -> Text args msg
-node =
-    Node
+node accessor name =
+    Node (Placeholder accessor name)
 
 
-{-| Create a placeholder for a `String`:
+{-| -}
+list : Wrapper (List (Text args msg)) args msg -> List (Text args msg) -> Text args msg
+list =
+    List
 
-    personalGreeting : Translation { name : String } msg
-    personalGreeting =
-        final "greeting" <|
+
+{-| You usually don't want to think about what quoation marks should be
+used in the current language. This function let's you define helper wrap
+text in the right symbols:
+
+    containingQuotes : Translation args msg
+    containingQuotes =
+        final "containingQuotes" <|
             concat
-                [ "Hello, "
-                , string .name "name"
-                , "!"
+                [ s "Then they said: "
+                , quotedOuter <|
+                    s "What is going on?"
                 ]
 
+    quotedOuter : Text args msg -> Text args msg
+    quotedOuter =
+        delimited <|
+            wrapper [ "quotes", "outer" ] <|
+                \text ->
+                    concat
+                        [ s "\""
+                        , text
+                        , s "\""
+                        ]
+
 -}
-string : Arg String args msg
-string =
-    String
+delimited : Wrapper (Text args msg) args msg -> Text args msg -> Text args msg
+delimited =
+    Delimited
 
 
 {-| Create a placeholder for a `Float`. You also need to provide
@@ -303,61 +374,33 @@ defined in the [CLDR](http://cldr.unicode.org). You most likely want to
 use one of those.
 
 -}
-float : Printer Float -> Arg Float args msg
-float =
-    Float
+float : Printer Float -> (args -> Float) -> Name -> Text args msg
+float printer accessor name =
+    Float printer (Placeholder accessor name)
 
 
-{-| Wrap a `Float` placeholder in some other `Text`. You usually need
-these for formatting units:
+{-| -}
+date : Printer Date -> (args -> Date) -> Name -> Text args msg
+date printer accessor name =
+    Date printer (Placeholder accessor name)
 
-    distanceInfo : Translation { args | distance : Float } msg
-    distanceInfo =
-        final "distanceInfo" <|
-            concat
-                [ "Distance travelled: "
-                , wrapFloat unitShortLengthMeterWrapper
-                    (float intPrinter)
-                    .distance
-                    "distance"
-                ]
 
-    unitShortLengthMeterWrapper : Wrapper Float
-    unitShortLengthMeterWrapper =
-        wrapper [ "unit", "short", "length-meter" ] <|
-            \wrapped accessor name ->
-                concat
-                    [ wrapped accessor name
-                    , s " m"
-                    ]
-
-    intPrinter : Printer Float
-    intPrinter =
-        printer [ "int" ] <|
-            \float ->
-                float
-                    |> floor
-                    |> toString
-
-**Note:** There are also a lot of wrappers in `kirchner/elm-cldr` for
-any locale.
-
--}
-wrapFloat : Wrapper Float args msg -> Arg Float args msg -> Arg Float args msg
-wrapFloat =
-    WrapFloat
+{-| -}
+time : Printer Time -> (args -> Time) -> Name -> Text args msg
+time printer accessor name =
+    Time printer (Placeholder accessor name)
 
 
 {-| -}
 plural :
     (Float -> String -> PluralForm)
-    -> Arg Float args msg
+    -> Printer Float
     -> (args -> Float)
     -> Name
     -> AllPluralForms args msg
     -> Text args msg
-plural =
-    Plural
+plural toPluralForm printer accessor name =
+    Plural toPluralForm printer (Placeholder accessor name)
 
 
 {-| -}
@@ -411,41 +454,54 @@ asNodes args translation =
 printText : Maybe String -> args -> Text args msg -> String
 printText maybeCount args text =
     case text of
-        Texts texts ->
-            texts
+        Text string ->
+            string
+
+        Texts subTexts ->
+            subTexts
                 |> List.map (printText maybeCount args)
                 |> String.concat
 
-        Verbatim string ->
-            string
-
-        Node _ accessor text ->
-            printText maybeCount args text
-
-        String accessor _ ->
+        String (Placeholder accessor _) ->
             accessor args
 
-        Float (Printer _ print) accessor _ ->
+        Node (Placeholder accessor _) subText ->
+            printText maybeCount args subText
+
+        List (Wrapper _ wrapper) subTexts ->
+            subTexts
+                |> wrapper
+                |> printText maybeCount args
+
+        Delimited (Wrapper _ wrapper) subText ->
+            subText
+                |> wrapper
+                |> printText maybeCount args
+
+        Float (Printer _ print) (Placeholder accessor _) ->
             args
                 |> accessor
                 |> print
 
-        WrapFloat (Wrapper _ wrap) wrapped accessor name ->
-            wrap wrapped accessor name
-                |> printText maybeCount args
+        Date (Printer _ print) (Placeholder accessor _) ->
+            args
+                |> accessor
+                |> print
 
-        Plural countToPluralForm wrapped accessor name allPluralForms ->
+        Time (Printer _ print) (Placeholder accessor _) ->
+            args
+                |> accessor
+                |> print
+
+        Plural toPluralForm (Printer _ printer) (Placeholder accessor _) allPluralForms ->
             let
-                countText =
-                    wrapped accessor name
-
                 count =
-                    countText |> printText Nothing args
+                    args
+                        |> accessor
+                        |> printer
 
                 pluralForm =
-                    countToPluralForm
-                        (args |> accessor)
-                        count
+                    toPluralForm (accessor args) count
 
                 printMaybeForm form =
                     form
@@ -485,49 +541,66 @@ printText maybeCount args text =
 textToNodes : Maybe String -> args -> Text args msg -> List (Node msg)
 textToNodes maybeCount args text =
     case text of
-        Texts texts ->
-            texts
+        Text string ->
+            [ VirtualDom.text string ]
+
+        Texts subTexts ->
+            subTexts
                 |> List.map (textToNodes maybeCount args)
                 |> List.concat
 
-        Verbatim string ->
-            [ VirtualDom.text string ]
-
-        Node accessor _ text ->
-            [ text
-                |> textToNodes maybeCount args
-                |> accessor args
-            ]
-
-        String accessor _ ->
+        String (Placeholder accessor _) ->
             [ args
                 |> accessor
                 |> VirtualDom.text
             ]
 
-        Float (Printer _ print) accessor _ ->
+        Node (Placeholder accessor _) subText ->
+            [ subText
+                |> textToNodes maybeCount args
+                |> accessor args
+            ]
+
+        List (Wrapper _ wrapper) subTexts ->
+            subTexts
+                |> wrapper
+                |> textToNodes maybeCount args
+
+        Delimited (Wrapper _ wrapper) subText ->
+            subText
+                |> wrapper
+                |> textToNodes maybeCount args
+
+        Float (Printer _ print) (Placeholder accessor _) ->
             [ args
                 |> accessor
                 |> print
                 |> VirtualDom.text
             ]
 
-        WrapFloat (Wrapper _ wrap) wrapped accessor name ->
-            wrap wrapped accessor name
-                |> textToNodes maybeCount args
+        Date (Printer _ print) (Placeholder accessor _) ->
+            [ args
+                |> accessor
+                |> print
+                |> VirtualDom.text
+            ]
 
-        Plural countToPluralForm wrapped accessor name allPluralForms ->
+        Time (Printer _ print) (Placeholder accessor _) ->
+            [ args
+                |> accessor
+                |> print
+                |> VirtualDom.text
+            ]
+
+        Plural toPluralForm (Printer _ printer) (Placeholder accessor _) allPluralForms ->
             let
-                countText =
-                    wrapped accessor name
-
                 count =
-                    countText |> printText Nothing args
+                    args
+                        |> accessor
+                        |> printer
 
                 pluralForm =
-                    countToPluralForm
-                        (args |> accessor)
-                        count
+                    toPluralForm (accessor args) count
 
                 printMaybeForm form =
                     form
@@ -566,174 +639,169 @@ textToNodes maybeCount args text =
 
 
 ---- TRANSLATE
-
-
-type Locale
-    = Locale LocaleData
-
-
-type alias LocaleData =
-    { translations : Dict String String
-    , printFloat : List Name -> Float -> String
-    , printInt : List Name -> Int -> String
-    , cardinalForm : Float -> String -> PluralForm
-    , ordinalForm : Float -> String -> PluralForm
-    , allowedCardinalForms : List PluralForm
-    , allowedOrdinalForms : List PluralForm
-    }
-
-
-locale : Locale
-locale =
-    Locale defaultLocaleData
-
-
-defaultLocaleData : LocaleData
-defaultLocaleData =
-    { translations = Dict.empty
-    , printFloat = \_ -> toString
-    , printInt = \_ -> toString
-    , cardinalForm = \_ _ -> Other
-    , ordinalForm = \_ _ -> Other
-    , allowedCardinalForms = [ Other ]
-    , allowedOrdinalForms = [ Other ]
-    }
-
-
-addTranslations : List ( String, String ) -> Locale -> Locale
-addTranslations translationList (Locale localeData) =
-    { localeData
-        | translations =
-            Dict.union
-                (translationList |> Dict.fromList)
-                localeData.translations
-    }
-        |> Locale
-
-
-addAllowedCardinalForms : List PluralForm -> Locale -> Locale
-addAllowedCardinalForms pluralForms (Locale localeData) =
-    { localeData
-        | allowedCardinalForms =
-            pluralForms
-                |> List.append localeData.allowedCardinalForms
-                |> makePluralFormsUnique
-    }
-        |> Locale
-
-
-addAllowedOrdinalForms : List PluralForm -> Locale -> Locale
-addAllowedOrdinalForms pluralForms (Locale localeData) =
-    { localeData
-        | allowedOrdinalForms =
-            pluralForms
-                |> List.append localeData.allowedOrdinalForms
-                |> makePluralFormsUnique
-    }
-        |> Locale
-
-
-makePluralFormsUnique : List PluralForm -> List PluralForm
-makePluralFormsUnique =
-    let
-        fromString form =
-            case form of
-                "Other" ->
-                    Other
-
-                "Zero" ->
-                    Zero
-
-                "One" ->
-                    One
-
-                "Two" ->
-                    Two
-
-                "Few" ->
-                    Few
-
-                "Many" ->
-                    Many
-
-                _ ->
-                    -- this cannot happen
-                    Other
-    in
-    List.map toString
-        >> Set.fromList
-        >> Set.toList
-        >> List.map fromString
-
-
-translateToWith : Locale -> args -> Translation args msg -> String
-translateToWith locale args translation =
-    case translation of
-        Final name text ->
-            translateText Nothing locale args name text
-
-        Fallback name text ->
-            translateText Nothing locale args name text
-
-
-
+--
+--
+--type Locale
+--    = Locale LocaleData
+--
+--
+--type alias LocaleData =
+--    { translations : Dict String String
+--    , printFloat : List Name -> Float -> String
+--    , printInt : List Name -> Int -> String
+--    , cardinalForm : Float -> String -> PluralForm
+--    , ordinalForm : Float -> String -> PluralForm
+--    , allowedCardinalForms : List PluralForm
+--    , allowedOrdinalForms : List PluralForm
+--    }
+--
+--
+--locale : Locale
+--locale =
+--    Locale defaultLocaleData
+--
+--
+--defaultLocaleData : LocaleData
+--defaultLocaleData =
+--    { translations = Dict.empty
+--    , printFloat = \_ -> toString
+--    , printInt = \_ -> toString
+--    , cardinalForm = \_ _ -> Other
+--    , ordinalForm = \_ _ -> Other
+--    , allowedCardinalForms = [ Other ]
+--    , allowedOrdinalForms = [ Other ]
+--    }
+--
+--
+--addTranslations : List ( String, String ) -> Locale -> Locale
+--addTranslations translationList (Locale localeData) =
+--    { localeData
+--        | translations =
+--            Dict.union
+--                (translationList |> Dict.fromList)
+--                localeData.translations
+--    }
+--        |> Locale
+--
+--
+--addAllowedCardinalForms : List PluralForm -> Locale -> Locale
+--addAllowedCardinalForms pluralForms (Locale localeData) =
+--    { localeData
+--        | allowedCardinalForms =
+--            pluralForms
+--                |> List.append localeData.allowedCardinalForms
+--                |> makePluralFormsUnique
+--    }
+--        |> Locale
+--
+--
+--addAllowedOrdinalForms : List PluralForm -> Locale -> Locale
+--addAllowedOrdinalForms pluralForms (Locale localeData) =
+--    { localeData
+--        | allowedOrdinalForms =
+--            pluralForms
+--                |> List.append localeData.allowedOrdinalForms
+--                |> makePluralFormsUnique
+--    }
+--        |> Locale
+--
+--
+--makePluralFormsUnique : List PluralForm -> List PluralForm
+--makePluralFormsUnique =
+--    let
+--        fromString form =
+--            case form of
+--                "Other" ->
+--                    Other
+--
+--                "Zero" ->
+--                    Zero
+--
+--                "One" ->
+--                    One
+--
+--                "Two" ->
+--                    Two
+--
+--                "Few" ->
+--                    Few
+--
+--                "Many" ->
+--                    Many
+--
+--                _ ->
+--                    -- this cannot happen
+--                    Other
+--    in
+--    List.map toString
+--        >> Set.fromList
+--        >> Set.toList
+--        >> List.map fromString
+--
+--
+--translateToWith : Locale -> args -> Translation args msg -> String
+--translateToWith locale args translation =
+--    case translation of
+--        Final name text ->
+--            translateText Nothing locale args name text
+--
+--        Fallback name text ->
+--            translateText Nothing locale args name text
 -- INTERNAL TRANSLATE HELPER
-
-
-translateText : Maybe String -> Locale -> args -> Name -> Text args msg -> String
-translateText maybeCount locale args name text =
-    "TODO: implement"
-
-
-nodeArgs : args -> Text args msg -> Dict Name (List (Node msg) -> Node msg)
-nodeArgs args text =
-    case text of
-        Texts texts ->
-            texts
-                |> List.map (nodeArgs args)
-                |> List.foldl Dict.union Dict.empty
-
-        Node accessor name _ ->
-            Dict.singleton name (args |> accessor)
-
-        _ ->
-            Dict.empty
-
-
-stringArgs : args -> Text args msg -> Dict Name String
-stringArgs args text =
-    case text of
-        Texts texts ->
-            texts
-                |> List.map (stringArgs args)
-                |> List.foldl Dict.union Dict.empty
-
-        String accessor name ->
-            Dict.singleton name (args |> accessor)
-
-        _ ->
-            Dict.empty
-
-
-floatArgs : args -> Text args msg -> Dict Name ( Printer Float, Float )
-floatArgs args text =
-    case text of
-        Texts texts ->
-            texts
-                |> List.map (floatArgs args)
-                |> List.foldl Dict.union Dict.empty
-
-        Float printer accessor name ->
-            Dict.singleton name ( printer, args |> accessor )
-
-        _ ->
-            Dict.empty
-
-
-
+--
+--
+--translateText : Maybe String -> Locale -> args -> Name -> Text args msg -> String
+--translateText maybeCount locale args name text =
+--    "TODO: implement"
+--
+--
+--nodeArgs : args -> Text args msg -> Dict Name (List (Node msg) -> Node msg)
+--nodeArgs args text =
+--    case text of
+--        Texts texts ->
+--            texts
+--                |> List.map (nodeArgs args)
+--                |> List.foldl Dict.union Dict.empty
+--
+--        Node accessor name _ ->
+--            Dict.singleton name (args |> accessor)
+--
+--        _ ->
+--            Dict.empty
+--
+--
+--stringArgs : args -> Text args msg -> Dict Name String
+--stringArgs args text =
+--    case text of
+--        Texts texts ->
+--            texts
+--                |> List.map (stringArgs args)
+--                |> List.foldl Dict.union Dict.empty
+--
+--        String accessor name ->
+--            Dict.singleton name (args |> accessor)
+--
+--        _ ->
+--            Dict.empty
+--
+--
+--floatArgs : args -> Text args msg -> Dict Name ( Printer Float, Float )
+--floatArgs args text =
+--    case text of
+--        Texts texts ->
+--            texts
+--                |> List.map (floatArgs args)
+--                |> List.foldl Dict.union Dict.empty
+--
+--        Float printer accessor name ->
+--            Dict.singleton name ( printer, args |> accessor )
+--
+--        _ ->
+--            Dict.empty
 ---- EXPORT TO ICU MESSAGE FORMAT
 
 
+{-| -}
 toIcu : Translation args msg -> String
 toIcu translation =
     case translation of
@@ -746,52 +814,77 @@ toIcu translation =
 
 textToIcu : Maybe (Text args msg) -> Text args msg -> String
 textToIcu maybeCount text =
+    let
+        wrap string =
+            "{" ++ string ++ "}"
+    in
     case text of
-        Texts texts ->
-            texts
+        Text string ->
+            string
+
+        Texts subTexts ->
+            subTexts
                 |> List.map (textToIcu maybeCount)
                 |> String.concat
 
-        Verbatim string ->
-            string
+        String (Placeholder _ name) ->
+            wrap name
 
-        String _ name ->
-            "{" ++ name ++ "}"
-
-        Node _ name nodeText ->
-            [ "{"
-            , name
-            , ", node, {"
-            , nodeText |> textToIcu maybeCount
-            , "}}"
+        Node (Placeholder _ name) subText ->
+            [ name
+            , ", node, "
+            , subText
+                |> textToIcu maybeCount
+                |> wrap
             ]
                 |> String.concat
+                |> wrap
 
-        Float (Printer printerNames _) _ name ->
-            [ "{"
-            , [ [ name
-                , "number"
-                ]
-              , printerNames
-              ]
-                |> List.concat
+        List (Wrapper wrapperNames _) subTexts ->
+            [ "list"
+            , wrapperNames
                 |> String.join ", "
-            , "}"
+            , subTexts
+                |> List.map (textToIcu maybeCount)
+                |> String.join " "
+                |> wrap
             ]
-                |> String.concat
+                |> String.join ", "
+                |> wrap
 
-        WrapFloat (Wrapper wrapperNames wrapper) arg accessor name ->
-            wrapper arg accessor name
-                |> textToIcu Nothing
+        Delimited (Wrapper wrapperNames _) subText ->
+            [ "delimited"
+            , wrapperNames
+                |> String.join ", "
+            , subText
+                |> textToIcu maybeCount
+                |> wrap
+            ]
+                |> String.join ", "
+                |> wrap
 
-        Plural _ arg _ name allPluralForms ->
+        Float (Printer printerNames _) (Placeholder _ name) ->
+            (name :: "number" :: printerNames)
+                |> String.join ", "
+                |> wrap
+
+        Date (Printer printerNames _) (Placeholder _ name) ->
+            (name :: "date" :: printerNames)
+                |> String.join ", "
+                |> wrap
+
+        Time (Printer printerNames _) (Placeholder _ name) ->
+            (name :: "time" :: printerNames)
+                |> String.join ", "
+                |> wrap
+
+        Plural _ (Printer printerNames _) (Placeholder _ name) allPluralForms ->
             let
                 pluralFormToIcu form text =
-                    form ++ "{" ++ textToIcu Nothing text ++ "}"
+                    form ++ wrap (textToIcu Nothing text)
             in
-            [ "{"
-            , name
-            , ", plural, "
+            [ (name :: "plural" :: printerNames)
+                |> String.join ", "
             , [ ( "other", Just allPluralForms.other )
               , ( "zero", allPluralForms.zero )
               , ( "one", allPluralForms.one )
@@ -805,9 +898,9 @@ textToIcu maybeCount text =
                             |> Maybe.map (pluralFormToIcu form)
                     )
                 |> String.join " "
-            , "}"
             ]
-                |> String.concat
+                |> String.join ", "
+                |> wrap
 
         Count ->
             "#"

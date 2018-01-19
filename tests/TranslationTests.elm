@@ -62,30 +62,6 @@ toIcuTest =
                             ++ String.join ", " (printerName :: printerNames)
                             ++ "}"
                         )
-        , fuzz4 fuzzName fuzzName Fuzz.string Fuzz.string "a wrapped float with an unnamed wrapper" <|
-            \name placeholder before after ->
-                (final name <|
-                    wrapFloat
-                        (wrapper [] <|
-                            \wrapped accessor name ->
-                                concat
-                                    [ s before
-                                    , wrapped accessor name
-                                    , s after
-                                    ]
-                        )
-                        floatToString
-                        .placeholder
-                        placeholder
-                )
-                    |> toIcu
-                    |> Expect.equal
-                        (before
-                            ++ "{"
-                            ++ placeholder
-                            ++ ", number}"
-                            ++ after
-                        )
         , fuzz3 fuzzName fuzzName Fuzz.string "a plural with only one form" <|
             \name placeholder text ->
                 (final name <|
@@ -155,7 +131,7 @@ toIcuTest =
 
 
 floatToString =
-    float (printer [] toString)
+    printer [] toString
 
 
 
