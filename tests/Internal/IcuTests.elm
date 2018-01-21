@@ -8,62 +8,6 @@ import Internal.Icu exposing (..)
 import Test exposing (Test, describe, fuzz, fuzz2, fuzz3, fuzz4, test)
 
 
-printWithTest : Test
-printWithTest =
-    describe "printWith"
-        [ fuzz textFuzzer "a simple text" <|
-            \text ->
-                [ Text text ]
-                    |> printWith emptyConfig Dict.empty
-                    |> Expect.equal text
-        , fuzz2 nameFuzzer textFuzzer "a simple placeholder" <|
-            \placeholder text ->
-                [ Argument placeholder [] [] ]
-                    |> printWith emptyConfig (Dict.singleton placeholder text)
-                    |> Expect.equal text
-        , fuzz2 nameFuzzer textFuzzer "a node wrapper" <|
-            \name text ->
-                [ Argument name [ "node" ] [ Unnamed [ Text text ] ] ]
-                    |> printWith emptyConfig Dict.empty
-                    |> Expect.equal
-                        ("{" ++ name ++ ", node, {" ++ text ++ "}}")
-        , fuzz2 nameFuzzer textFuzzer "a delimited wrapper" <|
-            \name text ->
-                [ Argument name
-                    [ "delimited", "quote" ]
-                    [ Unnamed [ Text text ] ]
-                ]
-                    |> printWith
-                        { delimitedPrinters =
-                            Dict.singleton [ "quote" ] <|
-                                \t -> "'" ++ t ++ "'"
-                        , listPrinters = Dict.empty
-                        }
-                        Dict.empty
-                    |> Expect.equal ("'" ++ text ++ "'")
-        , fuzz2 nameFuzzer (Fuzz.list textFuzzer) "a list wrapper" <|
-            \name texts ->
-                [ Argument name
-                    [ "list", "and" ]
-                    (texts |> List.map (\text -> Unnamed [ Text text ]))
-                ]
-                    |> printWith
-                        { delimitedPrinters = Dict.empty
-                        , listPrinters =
-                            Dict.singleton [ "and" ] (String.join " and ")
-                        }
-                        Dict.empty
-                    |> Expect.equal (String.join " and " texts)
-        ]
-
-
-emptyConfig : Config
-emptyConfig =
-    { delimitedPrinters = Dict.empty
-    , listPrinters = Dict.empty
-    }
-
-
 parseTest : Test
 parseTest =
     describe "parse"

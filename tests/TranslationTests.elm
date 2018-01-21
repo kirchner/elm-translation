@@ -1,8 +1,11 @@
 module TranslationTests exposing (..)
 
+import Char
+import Date exposing (Date)
 import Expect
 import Fuzz exposing (Fuzzer)
 import Test exposing (Test, describe, fuzz2, fuzz3, fuzz4)
+import Time exposing (Time)
 import Translation exposing (..)
 
 
@@ -130,10 +133,200 @@ toIcuTest =
         ]
 
 
+translateToWithTest : Test
+translateToWithTest =
+    describe "translateToWith"
+        [ fuzz3 nameFuzzer textFuzzer textFuzzer "a simple text " <|
+            \name textIn textOut ->
+                let
+                    targetLocale =
+                        locale
+                            |> addTranslations [ ( name, textOut ) ]
+                in
+                final name (s textIn)
+                    |> translateToWith targetLocale {}
+                    |> Expect.equal textOut
+        , fuzz3 nameFuzzer nameFuzzer textFuzzer "a string placeholder" <|
+            \name placeholder value ->
+                let
+                    targetLocale =
+                        locale
+                            |> addTranslations [ ( name, "{" ++ placeholder ++ "}" ) ]
+                in
+                final name (string .placeholder placeholder)
+                    |> translateToWith targetLocale { placeholder = value }
+                    |> Expect.equal value
+        , fuzz3 nameFuzzer nameFuzzer Fuzz.float "a number placeholder" <|
+            \name placeholder value ->
+                let
+                    targetLocale =
+                        locale
+                            |> addTranslations
+                                [ ( name, "{" ++ placeholder ++ ", number}" ) ]
+                            |> addFloatPrinter floatToString2
+                in
+                final name (float floatToString .placeholder placeholder)
+                    |> translateToWith targetLocale { placeholder = value }
+                    |> Expect.equal ("<" ++ toString value ++ ">")
+        , fuzz3 nameFuzzer nameFuzzer Fuzz.float "a date placeholder" <|
+            \name placeholder int ->
+                let
+                    value =
+                        (int * Time.millisecond)
+                            |> Date.fromTime
+
+                    targetLocale =
+                        locale
+                            |> addTranslations
+                                [ ( name, "{" ++ placeholder ++ ", date}" ) ]
+                            |> addDatePrinter dateToString2
+                in
+                final name (date dateToString .placeholder placeholder)
+                    |> translateToWith targetLocale { placeholder = value }
+                    |> Expect.equal ("<" ++ toString value ++ ">")
+        , fuzz3 nameFuzzer nameFuzzer Fuzz.float "a time placeholder" <|
+            \name placeholder int ->
+                let
+                    value =
+                        int * Time.millisecond
+
+                    targetLocale =
+                        locale
+                            |> addTranslations
+                                [ ( name, "{" ++ placeholder ++ ", time}" ) ]
+                            |> addTimePrinter timeToString2
+                in
+                final name (time timeToString .placeholder placeholder)
+                    |> translateToWith targetLocale { placeholder = value }
+                    |> Expect.equal ("<" ++ toString value ++ ">")
+        , fuzz3 nameFuzzer textFuzzer textFuzzer "a delimited text" <|
+            \name textOld textNew ->
+                let
+                    targetLocale =
+                        locale
+                            |> addTranslations
+                                [ ( name, "{_, delimited, quote, {" ++ textNew ++ "}}" ) ]
+                            |> addDelimitedPrinter quote2
+                in
+                final name (delimited quote (s textOld))
+                    |> translateToWith targetLocale {}
+                    |> Expect.equal ("<<" ++ textNew ++ ">>")
+        , fuzz3 nameFuzzer (Fuzz.list textFuzzer) (Fuzz.list textFuzzer) "a list" <|
+            \name listOld listNew ->
+                let
+                    targetLocale =
+                        locale
+                            |> addTranslations
+                                [ ( name
+                                  , [ "{_, list, and, "
+                                    , ("sthNew" :: listNew)
+                                        |> List.map (\t -> "{" ++ t ++ "}")
+                                        |> String.join " "
+                                    , "}"
+                                    ]
+                                        |> String.concat
+                                  )
+                                ]
+                            |> addListPrinter andList2
+                in
+                final name (list andList (listOld |> List.map s))
+                    |> translateToWith targetLocale {}
+                    |> Expect.equal (String.join " <and> " ("sthNew" :: listNew))
+        ]
+
+
+floatToString : Printer Float args msg
 floatToString =
     printer [] <|
         \float ->
             s (toString float)
+
+
+floatToString2 : Printer Float args msg
+floatToString2 =
+    printer [] <|
+        \float ->
+            concat
+                [ s "<"
+                , s (toString float)
+                , s ">"
+                ]
+
+
+dateToString : Printer Date args msg
+dateToString =
+    printer [] <|
+        \date ->
+            s (toString date)
+
+
+dateToString2 : Printer Date args msg
+dateToString2 =
+    printer [] <|
+        \date ->
+            concat
+                [ s "<"
+                , s (toString date)
+                , s ">"
+                ]
+
+
+timeToString : Printer Time args msg
+timeToString =
+    printer [] <|
+        \time ->
+            s (toString time)
+
+
+timeToString2 : Printer Time args msg
+timeToString2 =
+    printer [] <|
+        \time ->
+            concat
+                [ s "<"
+                , s (toString time)
+                , s ">"
+                ]
+
+
+quote : Printer (Text args msg) args msg
+quote =
+    printer [ "quote" ] <|
+        \text ->
+            concat
+                [ s "'"
+                , text
+                , s "'"
+                ]
+
+
+quote2 : Printer (Text args msg) args msg
+quote2 =
+    printer [ "quote" ] <|
+        \text ->
+            concat
+                [ s "<<"
+                , text
+                , s ">>"
+                ]
+
+
+andList : Printer (List (Text args msg)) args msg
+andList =
+    printer [ "and" ] <|
+        \texts ->
+            texts
+                |> List.intersperse (s " and ")
+                |> concat
+
+
+andList2 : Printer (List (Text args msg)) args msg
+andList2 =
+    printer [ "and" ] <|
+        \texts ->
+            texts
+                |> List.intersperse (s " <and> ")
+                |> concat
 
 
 
@@ -175,3 +368,23 @@ fuzzAllPluralForms =
         Fuzz.string
         Fuzz.string
         Fuzz.string
+
+
+textFuzzer : Fuzzer String
+textFuzzer =
+    Fuzz.string
+        |> Fuzz.map
+            (String.filter <|
+                \c ->
+                    (c /= '{') && (c /= '}') && (c /= '#') && (c /= '\'')
+            )
+        |> Fuzz.map ((++) "text")
+
+
+nameFuzzer : Fuzzer String
+nameFuzzer =
+    Fuzz.list
+        (Fuzz.intRange 65 90
+            |> Fuzz.map Char.fromCode
+        )
+        |> Fuzz.map (List.foldr String.cons "name")

@@ -39,6 +39,7 @@ module Translation
         , string
         , time
         , toIcu
+        , translateTo
         , translateToWith
         )
 
@@ -83,7 +84,7 @@ module Translation
 
 # Translating `Transaltion`s
 
-@docs translateToWith
+@docs translateTo, translateToWith
 
 @docs Locale, locale
 
@@ -761,19 +762,19 @@ textToNodes maybeCount args text =
 
 
 {-| -}
-type Locale
-    = Locale LocaleData
+type Locale args msg
+    = Locale (LocaleData args msg)
 
 
-type alias LocaleData =
+type alias LocaleData args msg =
     { translations : Dict String String
 
     -- printer
-    , delimitedPrinters : Dict (List Name) (String -> String)
-    , listPrinters : Dict (List Name) (List String -> String)
-    , floatPrinters : Dict (List Name) (Float -> String)
-    , datePrinters : Dict (List Name) (Date -> String)
-    , timePrinters : Dict (List Name) (Time -> String)
+    , delimitedPrinters : Dict (List Name) (Printer (Text args msg) args msg)
+    , listPrinters : Dict (List Name) (Printer (List (Text args msg)) args msg)
+    , floatPrinters : Dict (List Name) (Printer Float args msg)
+    , datePrinters : Dict (List Name) (Printer Date args msg)
+    , timePrinters : Dict (List Name) (Printer Time args msg)
 
     -- pluralization
     , toCardinalForm : Float -> String -> PluralForm
@@ -784,12 +785,12 @@ type alias LocaleData =
 
 
 {-| -}
-locale : Locale
+locale : Locale args msg
 locale =
     Locale defaultLocaleData
 
 
-defaultLocaleData : LocaleData
+defaultLocaleData : LocaleData args msg
 defaultLocaleData =
     { translations = Dict.empty
 
@@ -809,7 +810,7 @@ defaultLocaleData =
 
 
 {-| -}
-addTranslations : List ( String, String ) -> Locale -> Locale
+addTranslations : List ( String, String ) -> Locale args msg -> Locale args msg
 addTranslations translationList (Locale localeData) =
     Locale
         { localeData
@@ -821,8 +822,8 @@ addTranslations translationList (Locale localeData) =
 
 
 {-| -}
-addDelimitedPrinter : List Name -> (String -> String) -> Locale -> Locale
-addDelimitedPrinter names printer (Locale localeData) =
+addDelimitedPrinter : Printer (Text args msg) args msg -> Locale args msg -> Locale args msg
+addDelimitedPrinter ((Printer names _) as printer) (Locale localeData) =
     Locale
         { localeData
             | delimitedPrinters =
@@ -831,8 +832,8 @@ addDelimitedPrinter names printer (Locale localeData) =
 
 
 {-| -}
-addListPrinter : List Name -> (List String -> String) -> Locale -> Locale
-addListPrinter names printer (Locale localeData) =
+addListPrinter : Printer (List (Text args msg)) args msg -> Locale args msg -> Locale args msg
+addListPrinter ((Printer names _) as printer) (Locale localeData) =
     Locale
         { localeData
             | listPrinters =
@@ -841,8 +842,8 @@ addListPrinter names printer (Locale localeData) =
 
 
 {-| -}
-addFloatPrinter : List Name -> (Float -> String) -> Locale -> Locale
-addFloatPrinter names printer (Locale localeData) =
+addFloatPrinter : Printer Float args msg -> Locale args msg -> Locale args msg
+addFloatPrinter ((Printer names _) as printer) (Locale localeData) =
     Locale
         { localeData
             | floatPrinters =
@@ -851,8 +852,8 @@ addFloatPrinter names printer (Locale localeData) =
 
 
 {-| -}
-addDatePrinter : List Name -> (Date -> String) -> Locale -> Locale
-addDatePrinter names printer (Locale localeData) =
+addDatePrinter : Printer Date args msg -> Locale args msg -> Locale args msg
+addDatePrinter ((Printer names _) as printer) (Locale localeData) =
     Locale
         { localeData
             | datePrinters =
@@ -861,8 +862,8 @@ addDatePrinter names printer (Locale localeData) =
 
 
 {-| -}
-addTimePrinter : List Name -> (Time -> String) -> Locale -> Locale
-addTimePrinter names printer (Locale localeData) =
+addTimePrinter : Printer Time args msg -> Locale args msg -> Locale args msg
+addTimePrinter ((Printer names _) as printer) (Locale localeData) =
     Locale
         { localeData
             | timePrinters =
@@ -929,7 +930,7 @@ addTimePrinter names printer (Locale localeData) =
 
 
 {-| -}
-translateToWith : Locale -> args -> Translation args msg -> String
+translateToWith : Locale args msg -> args -> Translation args msg -> String
 translateToWith locale args translation =
     case translation of
         Final name text ->
@@ -939,95 +940,219 @@ translateToWith locale args translation =
             translateText Nothing locale args name text
 
 
+{-| -}
+translateTo : Locale {} msg -> Translation {} msg -> String
+translateTo locale translation =
+    case translation of
+        Final name text ->
+            translateText Nothing locale {} name text
+
+        Fallback name text ->
+            translateText Nothing locale {} name text
+
+
 
 --  INTERNAL TRANSLATE HELPER
 
 
-translateText : Maybe String -> Locale -> args -> Name -> Text args msg -> String
-translateText maybeCount (Locale localeData) args name text =
-    let
-        placeholders =
-            [ stringArgs args text
-            , floatArgs args text
-                |> Dict.map (printWith .floatPrinters)
-            , dateArgs args text
-                |> Dict.map (printWith .datePrinters)
-            , timeArgs args text
-                |> Dict.map (printWith .timePrinters)
-            ]
-                |> List.foldl Dict.union Dict.empty
-
-        printWith printers _ ( Printer names _, value ) =
-            localeData
-                |> printers
-                |> Dict.get names
-                |> Maybe.map (eval value)
-                -- FIXME: what happens if no printer found?
-                |> Maybe.withDefault ""
-
-        eval a f =
-            f a
-
-        config =
-            { delimitedPrinters = localeData.delimitedPrinters
-            , listPrinters = localeData.listPrinters
-            }
-    in
+translateText : Maybe String -> Locale args msg -> args -> Name -> Text args msg -> String
+translateText maybeCount ((Locale localeData) as locale) args name text =
     localeData.translations
         |> Dict.get name
         |> Maybe.andThen (Icu.parse >> Result.toMaybe)
-        |> Maybe.map (Icu.printWith config placeholders)
-        |> Maybe.withDefault (printText Nothing args text)
+        |> Maybe.map
+            (icuToText locale
+                { node = nodeAccessors args text
+                , string = stringAccessors args text
+                , float = floatAccessors args text
+                , date = dateAccessors args text
+                , time = timeAccessors args text
+                }
+            )
+        |> Maybe.map (printText Nothing args)
+        |> Maybe.withDefault ""
 
 
-nodeArgs : args -> Text args msg -> Dict Name (Text args msg)
-nodeArgs args text =
+icuToText :
+    Locale args msg
+    ->
+        { node : Dict Name (args -> (List (Node msg) -> Node msg))
+        , string : Dict Name (args -> String)
+        , float : Dict Name (args -> Float)
+        , date : Dict Name (args -> Date)
+        , time : Dict Name (args -> Time)
+        }
+    -> Icu.Message
+    -> Text args msg
+icuToText locale accessors message =
+    message
+        |> List.map (icuPartToText locale accessors)
+        |> concat
+
+
+icuPartToText :
+    Locale args msg
+    ->
+        { node : Dict Name (args -> (List (Node msg) -> Node msg))
+        , string : Dict Name (args -> String)
+        , float : Dict Name (args -> Float)
+        , date : Dict Name (args -> Date)
+        , time : Dict Name (args -> Time)
+        }
+    -> Icu.Part
+    -> Text args msg
+icuPartToText ((Locale localeData) as locale) accessors part =
+    case part of
+        Icu.Text text ->
+            s text
+
+        Icu.Argument placeholder names subMessages ->
+            case placeholder of
+                "_" ->
+                    case names of
+                        "delimited" :: otherNames ->
+                            case subMessages of
+                                (Icu.Unnamed subMessage) :: [] ->
+                                    localeData.delimitedPrinters
+                                        |> Dict.get otherNames
+                                        |> Maybe.map
+                                            (\printer ->
+                                                delimited printer <|
+                                                    icuToText locale accessors subMessage
+                                            )
+                                        |> Maybe.withDefault (s "")
+
+                                _ ->
+                                    s ""
+
+                        "list" :: otherNames ->
+                            let
+                                toText subMessage =
+                                    case subMessage of
+                                        Icu.Unnamed actualMessage ->
+                                            icuToText locale accessors actualMessage
+
+                                        Icu.Named _ _ ->
+                                            s ""
+                            in
+                            localeData.listPrinters
+                                |> Dict.get otherNames
+                                |> Maybe.map
+                                    (\printer ->
+                                        list printer <|
+                                            List.map toText subMessages
+                                    )
+                                |> Maybe.withDefault (s "")
+
+                        _ ->
+                            s ""
+
+                _ ->
+                    case names of
+                        [] ->
+                            accessors.string
+                                |> Dict.get placeholder
+                                |> Maybe.map
+                                    (\accessor ->
+                                        string accessor placeholder
+                                    )
+                                |> Maybe.withDefault (s "")
+
+                        "node" :: [] ->
+                            accessors.node
+                                |> Dict.get placeholder
+                                |> Maybe.map
+                                    (\accessor ->
+                                        case subMessages of
+                                            (Icu.Unnamed subMessage) :: [] ->
+                                                node accessor placeholder <|
+                                                    icuToText locale accessors subMessage
+
+                                            _ ->
+                                                s ""
+                                    )
+                                |> Maybe.withDefault (s "")
+
+                        "number" :: otherNames ->
+                            Maybe.map2
+                                (\printer accessor -> float printer accessor placeholder)
+                                (Dict.get otherNames localeData.floatPrinters)
+                                (Dict.get placeholder accessors.float)
+                                |> Maybe.withDefault (s "")
+
+                        "date" :: otherNames ->
+                            Maybe.map2
+                                (\printer accessor -> date printer accessor placeholder)
+                                (Dict.get otherNames localeData.datePrinters)
+                                (Dict.get placeholder accessors.date)
+                                |> Maybe.withDefault (s "")
+
+                        "time" :: otherNames ->
+                            Maybe.map2
+                                (\printer accessor -> time printer accessor placeholder)
+                                (Dict.get otherNames localeData.timePrinters)
+                                (Dict.get placeholder accessors.time)
+                                |> Maybe.withDefault (s "")
+
+                        _ ->
+                            s ""
+
+        Icu.Hash ->
+            count
+
+
+
+-- RETRIVE ARGUMENTS
+
+
+nodeAccessors : args -> Text args msg -> Dict Name (args -> (List (Node msg) -> Node msg))
+nodeAccessors args text =
     case text of
-        Node (Placeholder _ name) subText ->
-            Dict.singleton name subText
+        Node (Placeholder accessor name) _ ->
+            Dict.singleton name accessor
 
         _ ->
-            descendWith nodeArgs args text
+            descendWith nodeAccessors args text
 
 
-stringArgs : args -> Text args msg -> Dict Name String
-stringArgs args text =
+stringAccessors : args -> Text args msg -> Dict Name (args -> String)
+stringAccessors args text =
     case text of
         String (Placeholder accessor name) ->
-            Dict.singleton name (args |> accessor)
+            Dict.singleton name accessor
 
         _ ->
-            descendWith stringArgs args text
+            descendWith stringAccessors args text
 
 
-floatArgs : args -> Text args msg -> Dict Name ( Printer Float args msg, Float )
-floatArgs args text =
+floatAccessors : args -> Text args msg -> Dict Name (args -> Float)
+floatAccessors args text =
     case text of
-        Float printer (Placeholder accessor name) ->
-            Dict.singleton name ( printer, args |> accessor )
+        Float _ (Placeholder accessor name) ->
+            Dict.singleton name accessor
 
         _ ->
-            descendWith floatArgs args text
+            descendWith floatAccessors args text
 
 
-dateArgs : args -> Text args msg -> Dict Name ( Printer Date args msg, Date )
-dateArgs args text =
+dateAccessors : args -> Text args msg -> Dict Name (args -> Date)
+dateAccessors args text =
     case text of
-        Date printer (Placeholder accessor name) ->
-            Dict.singleton name ( printer, args |> accessor )
+        Date _ (Placeholder accessor name) ->
+            Dict.singleton name accessor
 
         _ ->
-            descendWith dateArgs args text
+            descendWith dateAccessors args text
 
 
-timeArgs : args -> Text args msg -> Dict Name ( Printer Time args msg, Time )
-timeArgs args text =
+timeAccessors : args -> Text args msg -> Dict Name (args -> Time)
+timeAccessors args text =
     case text of
-        Time printer (Placeholder accessor name) ->
-            Dict.singleton name ( printer, args |> accessor )
+        Time _ (Placeholder accessor name) ->
+            Dict.singleton name accessor
 
         _ ->
-            descendWith timeArgs args text
+            descendWith timeAccessors args text
 
 
 descendWith :
@@ -1109,7 +1234,8 @@ textToIcu maybeCount text =
                 |> wrap
 
         Delimited (Printer wrapperNames _) subText ->
-            [ "delimited"
+            [ "_"
+            , "delimited"
             , wrapperNames
                 |> String.join ", "
             , subText
@@ -1120,7 +1246,8 @@ textToIcu maybeCount text =
                 |> wrap
 
         List (Printer wrapperNames _) subTexts ->
-            [ "list"
+            [ "_"
+            , "list"
             , wrapperNames
                 |> String.join ", "
             , subTexts

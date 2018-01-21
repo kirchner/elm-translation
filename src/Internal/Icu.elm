@@ -1,7 +1,6 @@
 module Internal.Icu
     exposing
-        ( Config
-        , Message
+        ( Message
         , Part
             ( Argument
             , Hash
@@ -12,7 +11,6 @@ module Internal.Icu
             , Unnamed
             )
         , parse
-        , printWith
         )
 
 {-| Parse ICU messages, i.e. strings of the form
@@ -47,100 +45,6 @@ type SubMessage
 
 type alias Name =
     String
-
-
-
----- PRINTER
-
-
-type alias Config =
-    { delimitedPrinters : Dict (List Name) (String -> String)
-    , listPrinters : Dict (List Name) (List String -> String)
-    }
-
-
-printWith : Config -> Dict Name String -> Message -> String
-printWith config args message =
-    printMessageWith config args Nothing message
-
-
-printMessageWith : Config -> Dict Name String -> Maybe String -> Message -> String
-printMessageWith config args maybeCount message =
-    message
-        |> List.map (printPartWith config args maybeCount)
-        |> String.concat
-
-
-printPartWith : Config -> Dict Name String -> Maybe String -> Part -> String
-printPartWith config args maybeCount part =
-    case part of
-        Text text ->
-            text
-
-        Argument placeholder names subMessages ->
-            case names of
-                "node" :: [] ->
-                    case subMessages of
-                        (Unnamed subMessage) :: [] ->
-                            [ "{"
-                            , placeholder
-                            , ", node, {"
-                            , subMessage
-                                |> printMessageWith config args maybeCount
-                            , "}}"
-                            ]
-                                |> String.concat
-
-                        _ ->
-                            ""
-
-                "delimited" :: otherNames ->
-                    case config.delimitedPrinters |> Dict.get otherNames of
-                        Just delimitedPrinter ->
-                            case subMessages of
-                                (Unnamed subMessage) :: [] ->
-                                    subMessage
-                                        |> printMessageWith config args maybeCount
-                                        |> delimitedPrinter
-
-                                _ ->
-                                    ""
-
-                        Nothing ->
-                            ""
-
-                "list" :: otherNames ->
-                    case config.listPrinters |> Dict.get otherNames of
-                        Just listPrinter ->
-                            let
-                                print subMessage =
-                                    case subMessage of
-                                        Unnamed actualMessage ->
-                                            actualMessage
-                                                |> printMessageWith config args maybeCount
-
-                                        Named _ _ ->
-                                            ""
-                            in
-                            subMessages
-                                |> List.map print
-                                |> listPrinter
-
-                        Nothing ->
-                            ""
-
-                [] ->
-                    args
-                        |> Dict.get placeholder
-                        |> Maybe.withDefault ""
-
-                _ ->
-                    ""
-
-        Hash ->
-            -- TODO: do we want to return an error if no hash given?
-            maybeCount
-                |> Maybe.withDefault "#"
 
 
 
