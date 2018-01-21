@@ -80,6 +80,7 @@ module Translation
 
 import Date exposing (Date)
 import Dict exposing (Dict)
+import Internal.Icu as Icu
 import Set
 import Time exposing (Time)
 import VirtualDom exposing (Node)
