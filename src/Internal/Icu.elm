@@ -1,16 +1,18 @@
 module Internal.Icu
     exposing
-        ( Message
+        ( Config
+        , Message
         , Part
             ( Argument
             , Hash
             , Text
             )
-        , SubPart
+        , SubMessage
             ( Named
             , Unnamed
             )
         , parse
+        , printWith
         )
 
 {-| Parse ICU messages, i.e. strings of the form
@@ -22,6 +24,7 @@ module Internal.Icu
 -}
 
 import Char
+import Dict exposing (Dict)
 import Parser exposing (..)
 import Parser.LanguageKit exposing (..)
 import Set
@@ -33,13 +36,115 @@ type alias Message =
 
 type Part
     = Text String
-    | Argument String (List String) (List SubPart)
+    | Argument Name (List Name) (List SubMessage)
     | Hash
 
 
-type SubPart
-    = Unnamed Part
-    | Named String Part
+type SubMessage
+    = Unnamed Message
+    | Named Name Message
+
+
+type alias Name =
+    String
+
+
+
+---- PRINTER
+
+
+type alias Config =
+    { delimitedPrinters : Dict (List Name) (String -> String)
+    , listPrinters : Dict (List Name) (List String -> String)
+    }
+
+
+printWith : Config -> Dict Name String -> Message -> String
+printWith config args message =
+    printMessageWith config args Nothing message
+
+
+printMessageWith : Config -> Dict Name String -> Maybe String -> Message -> String
+printMessageWith config args maybeCount message =
+    message
+        |> List.map (printPartWith config args maybeCount)
+        |> String.concat
+
+
+printPartWith : Config -> Dict Name String -> Maybe String -> Part -> String
+printPartWith config args maybeCount part =
+    case part of
+        Text text ->
+            text
+
+        Argument placeholder names subMessages ->
+            case names of
+                "node" :: [] ->
+                    case subMessages of
+                        (Unnamed subMessage) :: [] ->
+                            [ "{"
+                            , placeholder
+                            , ", node, {"
+                            , subMessage
+                                |> printMessageWith config args maybeCount
+                            , "}}"
+                            ]
+                                |> String.concat
+
+                        _ ->
+                            ""
+
+                "delimited" :: otherNames ->
+                    case config.delimitedPrinters |> Dict.get otherNames of
+                        Just delimitedPrinter ->
+                            case subMessages of
+                                (Unnamed subMessage) :: [] ->
+                                    subMessage
+                                        |> printMessageWith config args maybeCount
+                                        |> delimitedPrinter
+
+                                _ ->
+                                    ""
+
+                        Nothing ->
+                            ""
+
+                "list" :: otherNames ->
+                    case config.listPrinters |> Dict.get otherNames of
+                        Just listPrinter ->
+                            let
+                                print subMessage =
+                                    case subMessage of
+                                        Unnamed actualMessage ->
+                                            actualMessage
+                                                |> printMessageWith config args maybeCount
+
+                                        Named _ _ ->
+                                            ""
+                            in
+                            subMessages
+                                |> List.map print
+                                |> listPrinter
+
+                        Nothing ->
+                            ""
+
+                [] ->
+                    args
+                        |> Dict.get placeholder
+                        |> Maybe.withDefault ""
+
+                _ ->
+                    ""
+
+        Hash ->
+            -- TODO: do we want to return an error if no hash given?
+            maybeCount
+                |> Maybe.withDefault "#"
+
+
+
+---- PARSER
 
 
 parse : String -> Result Parser.Error Message
@@ -51,7 +156,7 @@ message : Parser Message
 message =
     inContext "a message" <|
         oneOf
-            [ part
+            [ lazy (\_ -> part)
                 |> repeat oneOrMore
                 |> map joinTextParts
             , succeed [ Text "" ]
@@ -108,39 +213,45 @@ namesHelp placeholder names =
                     |. symbol ","
                     |. spaces
                     |= oneOf
-                        [ nextSubPart
-                            |> andThen (\subPart -> subPartsHelp placeholder (List.reverse names) [ subPart ])
-                        , nextName
-                            |> andThen (\name -> namesHelp placeholder (name :: names))
+                        [ andThen
+                            (\subMessage ->
+                                subMessagesHelp placeholder (List.reverse names) [ subMessage ]
+                            )
+                            nextSubMessage
+                        , andThen
+                            (\name ->
+                                namesHelp placeholder (name :: names)
+                            )
+                            nextName
                         ]
             , succeed (Argument placeholder (List.reverse names) [])
             ]
 
 
-subPartsHelp : String -> List String -> List SubPart -> Parser Part
-subPartsHelp placeholder names subParts =
-    inContext "a list of sub parts" <|
+subMessagesHelp : String -> List String -> List SubMessage -> Parser Part
+subMessagesHelp placeholder names subMessages =
+    inContext "a list of sub messages" <|
         oneOf
             [ delayedCommit spaces <|
                 succeed identity
                     |= andThen
-                        (\subPart -> subPartsHelp placeholder names (subPart :: subParts))
-                        nextSubPart
-            , succeed (Argument placeholder names (List.reverse subParts))
+                        (\subMessage -> subMessagesHelp placeholder names (subMessage :: subMessages))
+                        nextSubMessage
+            , succeed (Argument placeholder names (List.reverse subMessages))
             ]
 
 
-nextSubPart : Parser SubPart
-nextSubPart =
+nextSubMessage : Parser SubMessage
+nextSubMessage =
     oneOf
         [ succeed Unnamed
             |. symbol "{"
-            |= lazy (\_ -> part)
+            |= lazy (\_ -> message)
             |. symbol "}"
         , delayedCommitMap Named name <|
             succeed identity
                 |. symbol "{"
-                |= lazy (\_ -> part)
+                |= lazy (\_ -> message)
                 |. symbol "}"
         ]
 

@@ -1,6 +1,7 @@
 module Translation
     exposing
         ( AllPluralForms
+        , Locale
         , Name
         , PluralForm
             ( Few
@@ -13,6 +14,12 @@ module Translation
         , Printer
         , Text
         , Translation
+        , addDatePrinter
+        , addDelimitedPrinter
+        , addFloatPrinter
+        , addListPrinter
+        , addTimePrinter
+        , addTranslations
         , asNodes
         , asString
         , asStringWith
@@ -24,6 +31,7 @@ module Translation
         , final
         , float
         , list
+        , locale
         , node
         , plural
         , printer
@@ -31,6 +39,7 @@ module Translation
         , string
         , time
         , toIcu
+        , translateToWith
         )
 
 {-|
@@ -70,6 +79,15 @@ module Translation
 # Printers
 
 @docs Printer, printer
+
+
+# Translating `Transaltion`s
+
+@docs translateToWith
+
+@docs Locale, locale
+
+@docs addDatePrinter, addDelimitedPrinter, addFloatPrinter, addListPrinter, addTimePrinter, addTranslations
 
 
 # Exporting `Translation`s
@@ -740,51 +758,119 @@ textToNodes maybeCount args text =
 
 
 ---- TRANSLATE
---
---
---type Locale
---    = Locale LocaleData
---
---
---type alias LocaleData =
---    { translations : Dict String String
---    , printFloat : List Name -> Float -> String
---    , printInt : List Name -> Int -> String
---    , cardinalForm : Float -> String -> PluralForm
---    , ordinalForm : Float -> String -> PluralForm
---    , allowedCardinalForms : List PluralForm
---    , allowedOrdinalForms : List PluralForm
---    }
---
---
---locale : Locale
---locale =
---    Locale defaultLocaleData
---
---
---defaultLocaleData : LocaleData
---defaultLocaleData =
---    { translations = Dict.empty
---    , printFloat = \_ -> toString
---    , printInt = \_ -> toString
---    , cardinalForm = \_ _ -> Other
---    , ordinalForm = \_ _ -> Other
---    , allowedCardinalForms = [ Other ]
---    , allowedOrdinalForms = [ Other ]
---    }
---
---
---addTranslations : List ( String, String ) -> Locale -> Locale
---addTranslations translationList (Locale localeData) =
---    { localeData
---        | translations =
---            Dict.union
---                (translationList |> Dict.fromList)
---                localeData.translations
---    }
---        |> Locale
---
---
+
+
+{-| -}
+type Locale
+    = Locale LocaleData
+
+
+type alias LocaleData =
+    { translations : Dict String String
+
+    -- printer
+    , delimitedPrinters : Dict (List Name) (String -> String)
+    , listPrinters : Dict (List Name) (List String -> String)
+    , floatPrinters : Dict (List Name) (Float -> String)
+    , datePrinters : Dict (List Name) (Date -> String)
+    , timePrinters : Dict (List Name) (Time -> String)
+
+    -- pluralization
+    , toCardinalForm : Float -> String -> PluralForm
+    , toOrdinalForm : Float -> String -> PluralForm
+    , allowedCardinalForms : List PluralForm
+    , allowedOrdinalForms : List PluralForm
+    }
+
+
+{-| -}
+locale : Locale
+locale =
+    Locale defaultLocaleData
+
+
+defaultLocaleData : LocaleData
+defaultLocaleData =
+    { translations = Dict.empty
+
+    -- printer
+    , delimitedPrinters = Dict.empty
+    , listPrinters = Dict.empty
+    , floatPrinters = Dict.empty
+    , datePrinters = Dict.empty
+    , timePrinters = Dict.empty
+
+    -- pluralization
+    , toCardinalForm = \_ _ -> Other
+    , toOrdinalForm = \_ _ -> Other
+    , allowedCardinalForms = [ Other ]
+    , allowedOrdinalForms = [ Other ]
+    }
+
+
+{-| -}
+addTranslations : List ( String, String ) -> Locale -> Locale
+addTranslations translationList (Locale localeData) =
+    Locale
+        { localeData
+            | translations =
+                Dict.union
+                    (translationList |> Dict.fromList)
+                    localeData.translations
+        }
+
+
+{-| -}
+addDelimitedPrinter : List Name -> (String -> String) -> Locale -> Locale
+addDelimitedPrinter names printer (Locale localeData) =
+    Locale
+        { localeData
+            | delimitedPrinters =
+                Dict.insert names printer localeData.delimitedPrinters
+        }
+
+
+{-| -}
+addListPrinter : List Name -> (List String -> String) -> Locale -> Locale
+addListPrinter names printer (Locale localeData) =
+    Locale
+        { localeData
+            | listPrinters =
+                Dict.insert names printer localeData.listPrinters
+        }
+
+
+{-| -}
+addFloatPrinter : List Name -> (Float -> String) -> Locale -> Locale
+addFloatPrinter names printer (Locale localeData) =
+    Locale
+        { localeData
+            | floatPrinters =
+                Dict.insert names printer localeData.floatPrinters
+        }
+
+
+{-| -}
+addDatePrinter : List Name -> (Date -> String) -> Locale -> Locale
+addDatePrinter names printer (Locale localeData) =
+    Locale
+        { localeData
+            | datePrinters =
+                Dict.insert names printer localeData.datePrinters
+        }
+
+
+{-| -}
+addTimePrinter : List Name -> (Time -> String) -> Locale -> Locale
+addTimePrinter names printer (Locale localeData) =
+    Locale
+        { localeData
+            | timePrinters =
+                Dict.insert names printer localeData.timePrinters
+        }
+
+
+
 --addAllowedCardinalForms : List PluralForm -> Locale -> Locale
 --addAllowedCardinalForms pluralForms (Locale localeData) =
 --    { localeData
@@ -840,65 +926,137 @@ textToNodes maybeCount args text =
 --        >> List.map fromString
 --
 --
---translateToWith : Locale -> args -> Translation args msg -> String
---translateToWith locale args translation =
---    case translation of
---        Final name text ->
---            translateText Nothing locale args name text
---
---        Fallback name text ->
---            translateText Nothing locale args name text
--- INTERNAL TRANSLATE HELPER
---
---
---translateText : Maybe String -> Locale -> args -> Name -> Text args msg -> String
---translateText maybeCount locale args name text =
---    "TODO: implement"
---
---
---nodeArgs : args -> Text args msg -> Dict Name (List (Node msg) -> Node msg)
---nodeArgs args text =
---    case text of
---        Texts texts ->
---            texts
---                |> List.map (nodeArgs args)
---                |> List.foldl Dict.union Dict.empty
---
---        Node accessor name _ ->
---            Dict.singleton name (args |> accessor)
---
---        _ ->
---            Dict.empty
---
---
---stringArgs : args -> Text args msg -> Dict Name String
---stringArgs args text =
---    case text of
---        Texts texts ->
---            texts
---                |> List.map (stringArgs args)
---                |> List.foldl Dict.union Dict.empty
---
---        String accessor name ->
---            Dict.singleton name (args |> accessor)
---
---        _ ->
---            Dict.empty
---
---
---floatArgs : args -> Text args msg -> Dict Name ( Printer Float, Float )
---floatArgs args text =
---    case text of
---        Texts texts ->
---            texts
---                |> List.map (floatArgs args)
---                |> List.foldl Dict.union Dict.empty
---
---        Float printer accessor name ->
---            Dict.singleton name ( printer, args |> accessor )
---
---        _ ->
---            Dict.empty
+
+
+{-| -}
+translateToWith : Locale -> args -> Translation args msg -> String
+translateToWith locale args translation =
+    case translation of
+        Final name text ->
+            translateText Nothing locale args name text
+
+        Fallback name text ->
+            translateText Nothing locale args name text
+
+
+
+--  INTERNAL TRANSLATE HELPER
+
+
+translateText : Maybe String -> Locale -> args -> Name -> Text args msg -> String
+translateText maybeCount (Locale localeData) args name text =
+    let
+        placeholders =
+            [ stringArgs args text
+            , floatArgs args text
+                |> Dict.map (printWith .floatPrinters)
+            , dateArgs args text
+                |> Dict.map (printWith .datePrinters)
+            , timeArgs args text
+                |> Dict.map (printWith .timePrinters)
+            ]
+                |> List.foldl Dict.union Dict.empty
+
+        printWith printers _ ( Printer names _, value ) =
+            localeData
+                |> printers
+                |> Dict.get names
+                |> Maybe.map (eval value)
+                -- FIXME: what happens if no printer found?
+                |> Maybe.withDefault ""
+
+        eval a f =
+            f a
+
+        config =
+            { delimitedPrinters = localeData.delimitedPrinters
+            , listPrinters = localeData.listPrinters
+            }
+    in
+    localeData.translations
+        |> Dict.get name
+        |> Maybe.andThen (Icu.parse >> Result.toMaybe)
+        |> Maybe.map (Icu.printWith config placeholders)
+        |> Maybe.withDefault (printText Nothing args text)
+
+
+nodeArgs : args -> Text args msg -> Dict Name (Text args msg)
+nodeArgs args text =
+    case text of
+        Node (Placeholder _ name) subText ->
+            Dict.singleton name subText
+
+        _ ->
+            descendWith nodeArgs args text
+
+
+stringArgs : args -> Text args msg -> Dict Name String
+stringArgs args text =
+    case text of
+        String (Placeholder accessor name) ->
+            Dict.singleton name (args |> accessor)
+
+        _ ->
+            descendWith stringArgs args text
+
+
+floatArgs : args -> Text args msg -> Dict Name ( Printer Float args msg, Float )
+floatArgs args text =
+    case text of
+        Float printer (Placeholder accessor name) ->
+            Dict.singleton name ( printer, args |> accessor )
+
+        _ ->
+            descendWith floatArgs args text
+
+
+dateArgs : args -> Text args msg -> Dict Name ( Printer Date args msg, Date )
+dateArgs args text =
+    case text of
+        Date printer (Placeholder accessor name) ->
+            Dict.singleton name ( printer, args |> accessor )
+
+        _ ->
+            descendWith dateArgs args text
+
+
+timeArgs : args -> Text args msg -> Dict Name ( Printer Time args msg, Time )
+timeArgs args text =
+    case text of
+        Time printer (Placeholder accessor name) ->
+            Dict.singleton name ( printer, args |> accessor )
+
+        _ ->
+            descendWith timeArgs args text
+
+
+descendWith :
+    (args -> Text args msg -> Dict Name a)
+    -> args
+    -> Text args msg
+    -> Dict Name a
+descendWith extractor args text =
+    case text of
+        Texts subTexts ->
+            subTexts
+                |> List.map (extractor args)
+                |> List.foldl Dict.union Dict.empty
+
+        Delimited _ subText ->
+            -- FIXME: should we extract arguments hidden in printers?
+            extractor args subText
+
+        List _ subTexts ->
+            -- FIXME: should we extract arguments hidden in printers?
+            subTexts
+                |> List.map (extractor args)
+                |> List.foldl Dict.union Dict.empty
+
+        _ ->
+            Dict.empty
+
+
+
 ---- EXPORT TO ICU MESSAGE FORMAT
 
 
