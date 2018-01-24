@@ -14,11 +14,15 @@ module Translation
         , Printer
         , Text
         , Translation
+        , addAllowedCardinalForms
+        , addAllowedOrdinalForms
         , addDatePrinter
         , addDelimitedPrinter
         , addFloatPrinter
         , addListPrinter
         , addTimePrinter
+        , addToCardinalForm
+        , addToOrdinalForm
         , addTranslations
         , asNodes
         , asString
@@ -40,7 +44,6 @@ module Translation
         , time
         , toIcu
         , translateTo
-        , translateToWith
         )
 
 {-|
@@ -82,13 +85,17 @@ module Translation
 @docs Printer, printer
 
 
-# Translating `Transaltion`s
+# Translating `Translation`s
 
-@docs translateTo, translateToWith
+@docs translateTo
 
 @docs Locale, locale
 
-@docs addDatePrinter, addDelimitedPrinter, addFloatPrinter, addListPrinter, addTimePrinter, addTranslations
+@docs addTranslations
+
+@docs addToCardinalForm, addToOrdinalForm, addAllowedCardinalForms, addAllowedOrdinalForms
+
+@docs addDelimitedPrinter, addListPrinter, addFloatPrinter, addDatePrinter, addTimePrinter
 
 
 # Exporting `Translation`s
@@ -262,9 +269,13 @@ s =
 
 -}
 concat : List (Text args msg) -> Text args msg
-concat =
-    -- TODO: merge lists of lists
-    Texts
+concat texts =
+    case texts of
+        text :: [] ->
+            text
+
+        _ ->
+            Texts texts
 
 
 {-| Create a placeholder for a `String`:
@@ -871,106 +882,114 @@ addTimePrinter ((Printer names _) as printer) (Locale localeData) =
         }
 
 
-
---addAllowedCardinalForms : List PluralForm -> Locale -> Locale
---addAllowedCardinalForms pluralForms (Locale localeData) =
---    { localeData
---        | allowedCardinalForms =
---            pluralForms
---                |> List.append localeData.allowedCardinalForms
---                |> makePluralFormsUnique
---    }
---        |> Locale
---
---
---addAllowedOrdinalForms : List PluralForm -> Locale -> Locale
---addAllowedOrdinalForms pluralForms (Locale localeData) =
---    { localeData
---        | allowedOrdinalForms =
---            pluralForms
---                |> List.append localeData.allowedOrdinalForms
---                |> makePluralFormsUnique
---    }
---        |> Locale
---
---
---makePluralFormsUnique : List PluralForm -> List PluralForm
---makePluralFormsUnique =
---    let
---        fromString form =
---            case form of
---                "Other" ->
---                    Other
---
---                "Zero" ->
---                    Zero
---
---                "One" ->
---                    One
---
---                "Two" ->
---                    Two
---
---                "Few" ->
---                    Few
---
---                "Many" ->
---                    Many
---
---                _ ->
---                    -- this cannot happen
---                    Other
---    in
---    List.map toString
---        >> Set.fromList
---        >> Set.toList
---        >> List.map fromString
---
---
+{-| -}
+addToCardinalForm : (Float -> String -> PluralForm) -> Locale args msg -> Locale args msg
+addToCardinalForm toCardinalForm (Locale localeData) =
+    Locale
+        { localeData | toCardinalForm = toCardinalForm }
 
 
 {-| -}
-translateToWith : Locale args msg -> args -> Translation args msg -> String
-translateToWith locale args translation =
-    case translation of
-        Final name text ->
-            translateText Nothing locale args name text
-
-        Fallback name text ->
-            translateText Nothing locale args name text
+addToOrdinalForm : (Float -> String -> PluralForm) -> Locale args msg -> Locale args msg
+addToOrdinalForm toOrdinalForm (Locale localeData) =
+    Locale
+        { localeData | toOrdinalForm = toOrdinalForm }
 
 
 {-| -}
-translateTo : Locale {} msg -> Translation {} msg -> String
+addAllowedCardinalForms : List PluralForm -> Locale args msg -> Locale args msg
+addAllowedCardinalForms pluralForms (Locale localeData) =
+    { localeData
+        | allowedCardinalForms =
+            pluralForms
+                |> List.append localeData.allowedCardinalForms
+                |> makePluralFormsUnique
+    }
+        |> Locale
+
+
+{-| -}
+addAllowedOrdinalForms : List PluralForm -> Locale args msg -> Locale args msg
+addAllowedOrdinalForms pluralForms (Locale localeData) =
+    { localeData
+        | allowedOrdinalForms =
+            pluralForms
+                |> List.append localeData.allowedOrdinalForms
+                |> makePluralFormsUnique
+    }
+        |> Locale
+
+
+makePluralFormsUnique : List PluralForm -> List PluralForm
+makePluralFormsUnique =
+    let
+        fromString form =
+            case form of
+                "Other" ->
+                    Other
+
+                "Zero" ->
+                    Zero
+
+                "One" ->
+                    One
+
+                "Two" ->
+                    Two
+
+                "Few" ->
+                    Few
+
+                "Many" ->
+                    Many
+
+                _ ->
+                    -- this cannot happen
+                    Other
+    in
+    List.map toString
+        >> Set.fromList
+        >> Set.toList
+        >> List.map fromString
+
+
+{-| -}
+translateTo : Locale args msg -> Translation args msg -> Translation args msg
 translateTo locale translation =
     case translation of
         Final name text ->
-            translateText Nothing locale {} name text
+            Final name <|
+                translateText Nothing locale name text
 
         Fallback name text ->
-            translateText Nothing locale {} name text
+            Fallback name <|
+                translateText Nothing locale name text
 
 
 
 --  INTERNAL TRANSLATE HELPER
 
 
-translateText : Maybe String -> Locale args msg -> args -> Name -> Text args msg -> String
-translateText maybeCount ((Locale localeData) as locale) args name text =
+translateText :
+    Maybe String
+    -> Locale args msg
+    -> Name
+    -> Text args msg
+    -> Text args msg
+translateText maybeCount ((Locale localeData) as locale) name text =
     localeData.translations
         |> Dict.get name
         |> Maybe.andThen (Icu.parse >> Result.toMaybe)
         |> Maybe.map
             (icuToText locale
-                { node = nodeAccessors args text
-                , string = stringAccessors args text
-                , float = floatAccessors args text
-                , date = dateAccessors args text
-                , time = timeAccessors args text
+                { node = nodeAccessors text
+                , string = stringAccessors text
+                , float = floatAccessors text
+                , date = dateAccessors text
+                , time = timeAccessors text
                 }
             )
-        |> Maybe.map (printText Nothing args)
-        |> Maybe.withDefault ""
+        |> Maybe.withDefault text
 
 
 icuToText :
@@ -1191,28 +1210,28 @@ addPluralForm toText subMessage allPluralForms =
 -- RETRIVE ARGUMENTS
 
 
-nodeAccessors : args -> Text args msg -> Dict Name (args -> (List (Node msg) -> Node msg))
-nodeAccessors args text =
+nodeAccessors : Text args msg -> Dict Name (args -> (List (Node msg) -> Node msg))
+nodeAccessors text =
     case text of
         Node (Placeholder accessor name) _ ->
             Dict.singleton name accessor
 
         _ ->
-            descendWith nodeAccessors args text
+            descendWith nodeAccessors text
 
 
-stringAccessors : args -> Text args msg -> Dict Name (args -> String)
-stringAccessors args text =
+stringAccessors : Text args msg -> Dict Name (args -> String)
+stringAccessors text =
     case text of
         String (Placeholder accessor name) ->
             Dict.singleton name accessor
 
         _ ->
-            descendWith stringAccessors args text
+            descendWith stringAccessors text
 
 
-floatAccessors : args -> Text args msg -> Dict Name (args -> Float)
-floatAccessors args text =
+floatAccessors : Text args msg -> Dict Name (args -> Float)
+floatAccessors text =
     case text of
         Float _ (Placeholder accessor name) ->
             Dict.singleton name accessor
@@ -1221,49 +1240,48 @@ floatAccessors args text =
             Dict.singleton name accessor
 
         _ ->
-            descendWith floatAccessors args text
+            descendWith floatAccessors text
 
 
-dateAccessors : args -> Text args msg -> Dict Name (args -> Date)
-dateAccessors args text =
+dateAccessors : Text args msg -> Dict Name (args -> Date)
+dateAccessors text =
     case text of
         Date _ (Placeholder accessor name) ->
             Dict.singleton name accessor
 
         _ ->
-            descendWith dateAccessors args text
+            descendWith dateAccessors text
 
 
-timeAccessors : args -> Text args msg -> Dict Name (args -> Time)
-timeAccessors args text =
+timeAccessors : Text args msg -> Dict Name (args -> Time)
+timeAccessors text =
     case text of
         Time _ (Placeholder accessor name) ->
             Dict.singleton name accessor
 
         _ ->
-            descendWith timeAccessors args text
+            descendWith timeAccessors text
 
 
 descendWith :
-    (args -> Text args msg -> Dict Name a)
-    -> args
+    (Text args msg -> Dict Name a)
     -> Text args msg
     -> Dict Name a
-descendWith extractor args text =
+descendWith extractor text =
     case text of
         Texts subTexts ->
             subTexts
-                |> List.map (extractor args)
+                |> List.map extractor
                 |> List.foldl Dict.union Dict.empty
 
         Delimited _ subText ->
             -- FIXME: should we extract arguments hidden in printers?
-            extractor args subText
+            extractor subText
 
         List _ subTexts ->
             -- FIXME: should we extract arguments hidden in printers?
             subTexts
-                |> List.map (extractor args)
+                |> List.map extractor
                 |> List.foldl Dict.union Dict.empty
 
         _ ->
