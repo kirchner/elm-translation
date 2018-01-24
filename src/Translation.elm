@@ -1094,11 +1094,97 @@ icuPartToText ((Locale localeData) as locale) accessors part =
                                 (Dict.get placeholder accessors.time)
                                 |> Maybe.withDefault (s "")
 
+                        "plural" :: otherNames ->
+                            Maybe.map3
+                                (\printer accessor allPluralForms ->
+                                    plural
+                                        printer
+                                        localeData.toCardinalForm
+                                        accessor
+                                        placeholder
+                                        allPluralForms
+                                )
+                                (Dict.get otherNames localeData.floatPrinters)
+                                (Dict.get placeholder accessors.float)
+                                (allPluralForms (icuToText locale accessors) subMessages)
+                                |> Maybe.withDefault (s "")
+
+                        "selectordinal" :: otherNames ->
+                            Maybe.map3
+                                (\printer accessor allPluralForms ->
+                                    plural
+                                        printer
+                                        localeData.toOrdinalForm
+                                        accessor
+                                        placeholder
+                                        allPluralForms
+                                )
+                                (Dict.get otherNames localeData.floatPrinters)
+                                (Dict.get placeholder accessors.float)
+                                (allPluralForms (icuToText locale accessors) subMessages)
+                                |> Maybe.withDefault (s "")
+
                         _ ->
                             s ""
 
         Icu.Hash ->
             count
+
+
+allPluralForms :
+    (Icu.Message -> Text args msg)
+    -> List Icu.SubMessage
+    -> Maybe (AllPluralForms args msg)
+allPluralForms toText subMessages =
+    subMessages
+        |> List.foldl
+            (addPluralForm toText)
+            { other = s ""
+            , zero = Nothing
+            , one = Nothing
+            , two = Nothing
+            , few = Nothing
+            , many = Nothing
+            }
+        |> Just
+
+
+addPluralForm :
+    (Icu.Message -> Text args msg)
+    -> Icu.SubMessage
+    -> AllPluralForms args msg
+    -> AllPluralForms args msg
+addPluralForm toText subMessage allPluralForms =
+    case subMessage of
+        Icu.Named name message ->
+            let
+                text =
+                    toText message
+            in
+            case name of
+                "other" ->
+                    { allPluralForms | other = text }
+
+                "zero" ->
+                    { allPluralForms | zero = Just text }
+
+                "one" ->
+                    { allPluralForms | one = Just text }
+
+                "two" ->
+                    { allPluralForms | two = Just text }
+
+                "few" ->
+                    { allPluralForms | few = Just text }
+
+                "many" ->
+                    { allPluralForms | many = Just text }
+
+                _ ->
+                    allPluralForms
+
+        _ ->
+            allPluralForms
 
 
 
@@ -1129,6 +1215,9 @@ floatAccessors : args -> Text args msg -> Dict Name (args -> Float)
 floatAccessors args text =
     case text of
         Float _ (Placeholder accessor name) ->
+            Dict.singleton name accessor
+
+        Plural _ _ (Placeholder accessor name) _ ->
             Dict.singleton name accessor
 
         _ ->
