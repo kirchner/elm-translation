@@ -1,11 +1,12 @@
 # Translation
 
-This library helps you to translate and localize your application. It is
-meant to be used with `kirchner/elm-cldr`, which exposes all the
-localization data found in the [Unicode Common Locale Data
-Repository](http://cldr.unicode.org), and with
-`kirchner/elm-translation-runner`, a command line tool for converting
-JSON files containing translations in the [ICU Message
+This library helps you to translate and localize your application. It is meant
+to be used with [`kirchner/elm-cldr`](https://github.com/kirchner/elm-cldr),
+which exposes all the localization data found in the [Unicode Common Locale
+Data Repository](http://cldr.unicode.org), and with
+[`kirchner/elm-translation-runner`](https://github.com/kirchner/elm-translation-runner),
+a command line tool for converting JSON files containing translations in the
+[ICU Message
 Format](http://icu-project.org/apiref/icu4j/com/ibm/icu/text/MessageFormat.html)
 to Elm packages which expose these translations as data.
 
