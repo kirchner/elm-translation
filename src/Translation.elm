@@ -269,7 +269,7 @@ cldrToArgType names =
             (Just << ArgFloat) <|
                 case otherNames of
                     [] ->
-                        [ "decimal", "default" ]
+                        [ "decimal", "standard" ]
 
                     _ ->
                         "decimal" :: otherNames
@@ -281,10 +281,23 @@ cldrToArgType names =
             Just (ArgTime otherNames)
 
         _ :: "plural" :: otherNames ->
-            Just (ArgCardinal otherNames)
+            case otherNames of
+                [] ->
+                    Just (ArgCardinal [ "decimal", "standard" ])
+
+                _ ->
+                    Just (ArgCardinal otherNames)
 
         _ :: "selectordinal" :: otherNames ->
-            Just (ArgOrdinal otherNames)
+            case otherNames of
+                [] ->
+                    Just (ArgOrdinal [ "decimal", "standard" ])
+
+                _ ->
+                    Just (ArgOrdinal otherNames)
+
+        _ :: "node" :: [] ->
+            Just ArgNode
 
         _ :: [] ->
             Just ArgString
@@ -1565,13 +1578,81 @@ toElm toArgType name icuMessage =
 
 icuToElm : (List String -> Maybe ArgType) -> String -> Icu.Message -> String
 icuToElm toArgType name icuMessage =
-    [ functionDeclaration name []
+    let
+        argsFromMessage message =
+            message
+                |> List.map argsFromPart
+                |> List.foldl Dict.union Dict.empty
+
+        argsFromPart part =
+            case part of
+                Icu.Argument name names subMessages ->
+                    case toArgType (name :: names) of
+                        Just ArgString ->
+                            Dict.singleton name "String"
+
+                        Just ArgNode ->
+                            case subMessages of
+                                (Icu.Unnamed subMessage) :: [] ->
+                                    Dict.union
+                                        (Dict.singleton name "List (Node msg) -> Node msg")
+                                        (argsFromMessage subMessage)
+
+                                _ ->
+                                    Dict.empty
+
+                        Just (ArgDelimited otherNames) ->
+                            case subMessages of
+                                (Icu.Unnamed subMessage) :: [] ->
+                                    argsFromMessage subMessage
+
+                                _ ->
+                                    Dict.empty
+
+                        Just (ArgList otherNames) ->
+                            let
+                                argsFromSubMessage subMessage =
+                                    case subMessage of
+                                        Icu.Named _ subMessage ->
+                                            Just (argsFromMessage subMessage)
+
+                                        _ ->
+                                            Nothing
+                            in
+                            subMessages
+                                |> List.filterMap argsFromSubMessage
+                                |> List.foldl Dict.union Dict.empty
+
+                        Just (ArgFloat otherNames) ->
+                            Dict.singleton name "Float"
+
+                        Just (ArgDate otherNames) ->
+                            Dict.singleton name "Date"
+
+                        Just (ArgTime otherNames) ->
+                            Dict.singleton name "Time"
+
+                        Just (ArgCardinal otherNames) ->
+                            Dict.singleton name "Float"
+
+                        Just (ArgOrdinal otherNames) ->
+                            Dict.singleton name "Float"
+
+                        Nothing ->
+                            Dict.empty
+
+                _ ->
+                    Dict.empty
+    in
+    [ icuMessage
+        |> argsFromMessage
+        |> functionDeclaration name
     , functionDefinition toArgType name icuMessage
     ]
         |> String.join "\n"
 
 
-functionDeclaration : String -> List args -> String
+functionDeclaration : String -> Dict String String -> String
 functionDeclaration name args =
     [ name
     , " : Translation "
@@ -1581,14 +1662,27 @@ functionDeclaration name args =
         |> String.concat
 
 
-arguments : List args -> String
+arguments : Dict String String -> String
 arguments args =
-    case args of
-        [] ->
-            "args"
-
-        _ ->
-            "TODO"
+    let
+        printArgument name tvpe =
+            [ name
+            , ":"
+            , tvpe
+            ]
+                |> String.join " "
+    in
+    if Dict.isEmpty args then
+        "args"
+    else
+        [ "{ args |"
+        , args
+            |> Dict.map printArgument
+            |> Dict.values
+            |> String.join ", "
+        , "}"
+        ]
+            |> String.join " "
 
 
 functionDefinition : (List String -> Maybe ArgType) -> String -> Icu.Message -> String
@@ -1671,7 +1765,22 @@ partToElm toArgType part =
                         |> String.join " "
 
                 Just ArgNode ->
-                    "TODO"
+                    case subMessages of
+                        (Icu.Unnamed subMessage) :: [] ->
+                            [ [ "node"
+                              , accessor name
+                              , quote name
+                              , "<|"
+                              ]
+                                |> String.join " "
+                            , subMessage
+                                |> messageToElm toArgType
+                                |> indent
+                            ]
+                                |> String.join "\n"
+
+                        _ ->
+                            ""
 
                 Just (ArgDelimited otherNames) ->
                     case subMessages of
@@ -1721,16 +1830,68 @@ partToElm toArgType part =
                     simplePlaceholder "time" name otherNames
 
                 Just (ArgCardinal otherNames) ->
-                    "TODO"
+                    let
+                        keyValuePairs subMessage =
+                            case subMessage of
+                                Icu.Unnamed _ ->
+                                    Nothing
+
+                                Icu.Named name subMessage ->
+                                    Just ( name, messageToElm toArgType subMessage )
+
+                        actualNames =
+                            case otherNames of
+                                [] ->
+                                    [ "decimalStandard" ]
+
+                                _ ->
+                                    otherNames
+                    in
+                    [ [ simplePlaceholder "cardinal" name actualNames
+                      , "<|"
+                      ]
+                        |> String.join " "
+                    , subMessages
+                        |> List.filterMap keyValuePairs
+                        |> generateRecord
+                        |> indent
+                    ]
+                        |> String.join "\n"
 
                 Just (ArgOrdinal otherNames) ->
-                    "TODO"
+                    let
+                        keyValuePairs subMessage =
+                            case subMessage of
+                                Icu.Unnamed _ ->
+                                    Nothing
+
+                                Icu.Named name subMessage ->
+                                    Just ( name, messageToElm toArgType subMessage )
+
+                        actualNames =
+                            case otherNames of
+                                [] ->
+                                    [ "decimalStandard" ]
+
+                                _ ->
+                                    otherNames
+                    in
+                    [ [ simplePlaceholder "ordinal" name otherNames
+                      , "<|"
+                      ]
+                        |> String.join " "
+                    , subMessages
+                        |> List.filterMap keyValuePairs
+                        |> generateRecord
+                        |> indent
+                    ]
+                        |> String.join "\n"
 
                 Nothing ->
-                    "TODO"
+                    "s \"\""
 
         Icu.Hash ->
-            "#"
+            "count"
 
 
 
@@ -1762,15 +1923,37 @@ generateList elements =
             "[]"
 
         onlyElement :: [] ->
-            [ "[ "
+            [ "["
             , onlyElement
-            , " ]"
+            , "]"
             ]
-                |> String.concat
+                |> String.join " "
 
         firstElement :: rest ->
             [ (("[ " ++ firstElement) :: rest)
                 |> String.join "\n, "
             , "\n]"
+            ]
+                |> String.concat
+
+
+generateRecord : List ( String, String ) -> String
+generateRecord elements =
+    let
+        generateEqual ( key, value ) =
+            [ key
+            , " =\n"
+            , indent value
+            ]
+                |> String.concat
+    in
+    case elements of
+        [] ->
+            "{}"
+
+        firstElement :: rest ->
+            [ (("{ " ++ generateEqual firstElement) :: List.map generateEqual rest)
+                |> String.join "\n, "
+            , "\n}"
             ]
                 |> String.concat
