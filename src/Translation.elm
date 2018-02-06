@@ -60,6 +60,7 @@ module Translation
         , string
         , time
         , toElm
+        , toElmType
         , toIcu
         , translateTo
         )
@@ -127,7 +128,7 @@ module Translation
 
 # Code Generation
 
-@docs toElm
+@docs toElm, toElmType
 
 -}
 
@@ -1576,90 +1577,116 @@ toElm toArgType name icuMessage =
         |> Maybe.map (icuToElm toArgType name)
 
 
+{-| Given an ICU message, this function returns the Elm code for the type of
+the corresponding `Translation`. So `toElmType "Good morning, {name}!"` will
+produce `"Translation { args | name : String } msg`, for example.
+-}
+toElmType : (List String -> Maybe ArgType) -> String -> Maybe String
+toElmType toArgType icuMessage =
+    icuMessage
+        |> Icu.parse
+        |> Result.toMaybe
+        |> Maybe.map
+            (argsFromMessage toArgType
+                >> returnType
+            )
+
+
 icuToElm : (List String -> Maybe ArgType) -> String -> Icu.Message -> String
 icuToElm toArgType name icuMessage =
-    let
-        argsFromMessage message =
-            message
-                |> List.map argsFromPart
-                |> List.foldl Dict.union Dict.empty
-
-        argsFromPart part =
-            case part of
-                Icu.Argument name names subMessages ->
-                    case toArgType (name :: names) of
-                        Just ArgString ->
-                            Dict.singleton name "String"
-
-                        Just ArgNode ->
-                            case subMessages of
-                                (Icu.Unnamed subMessage) :: [] ->
-                                    Dict.union
-                                        (Dict.singleton name "List (Node msg) -> Node msg")
-                                        (argsFromMessage subMessage)
-
-                                _ ->
-                                    Dict.empty
-
-                        Just (ArgDelimited otherNames) ->
-                            case subMessages of
-                                (Icu.Unnamed subMessage) :: [] ->
-                                    argsFromMessage subMessage
-
-                                _ ->
-                                    Dict.empty
-
-                        Just (ArgList otherNames) ->
-                            let
-                                argsFromSubMessage subMessage =
-                                    case subMessage of
-                                        Icu.Named _ subMessage ->
-                                            Just (argsFromMessage subMessage)
-
-                                        _ ->
-                                            Nothing
-                            in
-                            subMessages
-                                |> List.filterMap argsFromSubMessage
-                                |> List.foldl Dict.union Dict.empty
-
-                        Just (ArgFloat otherNames) ->
-                            Dict.singleton name "Float"
-
-                        Just (ArgDate otherNames) ->
-                            Dict.singleton name "Date"
-
-                        Just (ArgTime otherNames) ->
-                            Dict.singleton name "Time"
-
-                        Just (ArgCardinal otherNames) ->
-                            Dict.singleton name "Float"
-
-                        Just (ArgOrdinal otherNames) ->
-                            Dict.singleton name "Float"
-
-                        Nothing ->
-                            Dict.empty
-
-                _ ->
-                    Dict.empty
-    in
     [ icuMessage
-        |> argsFromMessage
+        |> argsFromMessage toArgType
         |> functionDeclaration name
     , functionDefinition toArgType name icuMessage
     ]
         |> String.join "\n"
 
 
+argsFromMessage : (List String -> Maybe ArgType) -> Icu.Message -> Dict String String
+argsFromMessage toArgType message =
+    message
+        |> List.map (argsFromPart toArgType)
+        |> List.foldl Dict.union Dict.empty
+
+
+argsFromPart : (List String -> Maybe ArgType) -> Icu.Part -> Dict String String
+argsFromPart toArgType part =
+    case part of
+        Icu.Argument name names subMessages ->
+            case toArgType (name :: names) of
+                Just ArgString ->
+                    Dict.singleton name "String"
+
+                Just ArgNode ->
+                    case subMessages of
+                        (Icu.Unnamed subMessage) :: [] ->
+                            Dict.union
+                                (Dict.singleton name "List (Node msg) -> Node msg")
+                                (argsFromMessage toArgType subMessage)
+
+                        _ ->
+                            Dict.empty
+
+                Just (ArgDelimited otherNames) ->
+                    case subMessages of
+                        (Icu.Unnamed subMessage) :: [] ->
+                            argsFromMessage toArgType subMessage
+
+                        _ ->
+                            Dict.empty
+
+                Just (ArgList otherNames) ->
+                    let
+                        argsFromSubMessage subMessage =
+                            case subMessage of
+                                Icu.Named _ subMessage ->
+                                    Just (argsFromMessage toArgType subMessage)
+
+                                _ ->
+                                    Nothing
+                    in
+                    subMessages
+                        |> List.filterMap argsFromSubMessage
+                        |> List.foldl Dict.union Dict.empty
+
+                Just (ArgFloat otherNames) ->
+                    Dict.singleton name "Float"
+
+                Just (ArgDate otherNames) ->
+                    Dict.singleton name "Date"
+
+                Just (ArgTime otherNames) ->
+                    Dict.singleton name "Time"
+
+                Just (ArgCardinal otherNames) ->
+                    Dict.singleton name "Float"
+
+                Just (ArgOrdinal otherNames) ->
+                    Dict.singleton name "Float"
+
+                Nothing ->
+                    Dict.empty
+
+        _ ->
+            Dict.empty
+
+
 functionDeclaration : String -> Dict String String -> String
 functionDeclaration name args =
     [ name
-    , " : Translation "
-    , arguments args
-    , " msg"
+    , ":"
+    , returnType args
     ]
-        |> String.concat
+        |> String.join " "
+
+
+returnType : Dict String String -> String
+returnType args =
+    [ "Translation"
+    , arguments args
+    , "msg"
+    ]
+        |> String.join " "
 
 
 arguments : Dict String String -> String
