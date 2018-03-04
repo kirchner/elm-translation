@@ -1659,10 +1659,32 @@ argsFromPart toArgType part =
                     Dict.singleton name "Time"
 
                 Just (ArgCardinal otherNames) ->
-                    Dict.singleton name "Float"
+                    let
+                        argsFromSubMessage subMessage =
+                            case subMessage of
+                                Icu.Named _ subMessage ->
+                                    Just (argsFromMessage toArgType subMessage)
+
+                                _ ->
+                                    Nothing
+                    in
+                    subMessages
+                        |> List.filterMap argsFromSubMessage
+                        |> List.foldl Dict.union (Dict.singleton name "Float")
 
                 Just (ArgOrdinal otherNames) ->
-                    Dict.singleton name "Float"
+                    let
+                        argsFromSubMessage subMessage =
+                            case subMessage of
+                                Icu.Named _ subMessage ->
+                                    Just (argsFromMessage toArgType subMessage)
+
+                                _ ->
+                                    Nothing
+                    in
+                    subMessages
+                        |> List.filterMap argsFromSubMessage
+                        |> List.foldl Dict.union (Dict.singleton name "Float")
 
                 Nothing ->
                     Dict.empty
