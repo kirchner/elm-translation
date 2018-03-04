@@ -139,7 +139,6 @@ import Parser
 import Set
 import String.Extra as String
 import Time exposing (Time)
-import VirtualDom exposing (Node)
 
 
 {-| -}
@@ -149,7 +148,7 @@ type alias Name =
 
 {-| A `Translation` is a piece of localized text in a specific language.
 You can turn it into a `String` using `asString`. It can also contain
-placeholders, for example `Translation { args | name : String } msg`.
+placeholders, for example `Translation { args | name : String } node`.
 You then have to use `asStringWith` and provide values for every
 placeholder.
 
@@ -158,9 +157,9 @@ using `asNodes`. Take a look the package documentation for an example.
 It's really convenient!
 
 -}
-type Translation args msg
-    = Final String (Text args msg)
-    | Fallback String (Text args msg)
+type Translation args node
+    = Final String (Text args node)
+    | Fallback String (Text args node)
 
 
 {-| This is the building block for your translations. `Text`s can
@@ -169,20 +168,20 @@ either be just `String`s or placeholders for `String`s, `Float`s,
 pluralization is possible. There are several functions for creating and
 manipulating `Text`s, further down.
 -}
-type Text args msg
+type Text args node
     = TText String
-    | TTexts (List (Text args msg))
+    | TTexts (List (Text args node))
       -- with printers
-    | TDelimited (Printer (Text args msg) args msg) (Text args msg)
-    | TList (Printer (List (Text args msg)) args msg) (List (Text args msg))
+    | TDelimited (Printer (Text args node) args node) (Text args node)
+    | TList (Printer (List (Text args node)) args node) (List (Text args node))
       -- with placeholders
     | TString (Placeholder String args)
-    | TNode (Placeholder (List (Node msg) -> Node msg) args) (Text args msg)
+    | TNode (Placeholder (List node -> node) args) (Text args node)
       -- with printers and placeholders
-    | TFloat (Printer Float args msg) (Placeholder Float args)
-    | TDate (Printer Date args msg) (Placeholder Date args)
-    | TTime (Printer Time args msg) (Placeholder Time args)
-    | TPlural (Printer Float args msg) (Float -> String -> PluralForm) (Placeholder Float args) (AllPluralForms args msg)
+    | TFloat (Printer Float args node) (Placeholder Float args)
+    | TDate (Printer Date args node) (Placeholder Date args)
+    | TTime (Printer Time args node) (Placeholder Time args)
+    | TPlural (Printer Float args node) (Float -> String -> PluralForm) (Placeholder Float args) (AllPluralForms args node)
       -- misc
     | TCount
 
@@ -214,22 +213,22 @@ type Placeholder a args
 {-| Some `Text`s need to know how to convert placeholders into `Text`.
 We do this by providing a `Printer`.
 -}
-type Printer a args msg
-    = Printer (List Name) (a -> Text args msg)
+type Printer a args node
+    = Printer (List Name) (a -> Text args node)
 
 
 {-| Create a `Printer`. The first argument should be a unique
 identifier, the second argument is the actual "printer". For example,
 you can lift `toString` to a printer:
 
-    stringify : Printer a args msg
+    stringify : Printer a args node
     stringify =
         printer [ "stringify" ] <|
             \a ->
                 s (toString a)
 
 -}
-printer : List Name -> (a -> Text args msg) -> Printer a args msg
+printer : List Name -> (a -> Text args node) -> Printer a args node
 printer =
     Printer
 
@@ -247,13 +246,13 @@ type PluralForm
 
 
 {-| -}
-type alias AllPluralForms args msg =
-    { other : Text args msg
-    , zero : Maybe (Text args msg)
-    , one : Maybe (Text args msg)
-    , two : Maybe (Text args msg)
-    , few : Maybe (Text args msg)
-    , many : Maybe (Text args msg)
+type alias AllPluralForms args node =
+    { other : Text args node
+    , zero : Maybe (Text args node)
+    , one : Maybe (Text args node)
+    , two : Maybe (Text args node)
+    , few : Maybe (Text args node)
+    , many : Maybe (Text args node)
     }
 
 
@@ -354,7 +353,7 @@ exported when running
     $ elm-translations generate-json
 
 -}
-final : Name -> Text args msg -> Translation args msg
+final : Name -> Text args node -> Translation args node
 final =
     Final
 
@@ -367,7 +366,7 @@ when running
 the translation will **not** be exported.
 
 -}
-fallback : Name -> Text args msg -> Translation args msg
+fallback : Name -> Text args node -> Translation args node
 fallback =
     Fallback
 
@@ -378,20 +377,20 @@ fallback =
 
 {-| Create a `Text` which gets replaced by the provided `String`:
 
-    greeting : Translation args msg
+    greeting : Translation args node
     greeting =
         final "greeting" <|
             s "Good morning!"
 
 -}
-s : String -> Text args msg
+s : String -> Text args node
 s =
     TText
 
 
 {-| Join a list of `Text`s:
 
-    longerGreeting : Translation args msg
+    longerGreeting : Translation args node
     longerGreeting =
         final "longerGreeting" <|
             concat
@@ -400,7 +399,7 @@ s =
                 ]
 
 -}
-concat : List (Text args msg) -> Text args msg
+concat : List (Text args node) -> Text args node
 concat texts =
     case texts of
         text :: [] ->
@@ -412,7 +411,7 @@ concat texts =
 
 {-| Create a placeholder for a `String`:
 
-    personalGreeting : Translation { args | name : String } msg
+    personalGreeting : Translation { args | name : String } node
     personalGreeting =
         final "greeting" <|
             concat
@@ -422,7 +421,7 @@ concat texts =
                 ]
 
 -}
-string : (args -> String) -> Name -> Text args msg
+string : (args -> String) -> Name -> Text args node
 string accessor name =
     TString (Placeholder accessor name)
 
@@ -430,7 +429,7 @@ string accessor name =
 {-| When using `asNodes` on a `Translation`, this `Text` will become
 a node with a `Node.text` subnode containing the provided `Text`:
 
-    question : Translation { args | strong : List (Node msg) -> Node msg) } msg
+    question : Translation { args | strong : List node -> node) } node
     question =
         final "question" <|
             concat
@@ -441,18 +440,18 @@ a node with a `Node.text` subnode containing the provided `Text`:
                 ]
 
 -}
-node : (args -> (List (Node msg) -> Node msg)) -> Name -> Text args msg -> Text args msg
+node : (args -> (List node -> node)) -> Name -> Text args node -> Text args node
 node accessor name =
     TNode (Placeholder accessor name)
 
 
 {-| With this function you can create quotation helpers:
 
-    quote : Text args msg -> Text args msg
+    quote : Text args node -> Text args node
     quote =
         delimited quotePrinter
 
-    quotePrinter : Printer (Text args msg) args msg
+    quotePrinter : Printer (Text args node) args node
     quotePrinter =
         printer [ "quotes", "outer" ] <|
             \text ->
@@ -462,7 +461,7 @@ node accessor name =
                     , s "”"
                     ]
 
-    assumption : Translation args msg
+    assumption : Translation args node
     assumption =
         final "assumption" <|
             concat
@@ -475,7 +474,7 @@ Take a look at `kirchner/elm-cldr` which defines such helpers for all
 languages contained in the [CLDR](http://cldr.unicode.org).
 
 -}
-delimited : Printer (Text args msg) args msg -> Text args msg -> Text args msg
+delimited : Printer (Text args node) args node -> Text args node -> Text args node
 delimited =
     TDelimited
 
@@ -485,11 +484,11 @@ delimited =
 this is like `concat` but you can specify how to actually join the
 `Text`s:
 
-    and : List (Text args msg) -> Text args msg
+    and : List (Text args node) -> Text args node
     and =
         list andPrinter
 
-    andPrinter : Printer (List (Text args msg)) args msg
+    andPrinter : Printer (List (Text args node)) args node
     andPrinter =
         printer [ "list", "and" ] <|
             \texts ->
@@ -511,7 +510,7 @@ this is like `concat` but you can specify how to actually join the
                             |> List.reverse
                             |> concat
 
-    membersInfo : Translation args msg
+    membersInfo : Translation args node
     membersInfo =
         final "membersInfo" <|
             concat
@@ -527,7 +526,7 @@ Take a look at `kirchner/elm-cldr` which defines such helpers for all
 languages contained in the [CLDR](http://cldr.unicode.org).
 
 -}
-list : Printer (List (Text args msg)) args msg -> List (Text args msg) -> Text args msg
+list : Printer (List (Text args node)) args node -> List (Text args node) -> Text args node
 list =
     TList
 
@@ -536,7 +535,7 @@ list =
 a `Printer Float`, so we know how to turn the actual value into
 a `Text`:
 
-    mailboxInfo : Translation { args | mailCount : Float } msg
+    mailboxInfo : Translation { args | mailCount : Float } node
     mailboxInfo =
         final "mailboxInfo" <|
             concat
@@ -559,21 +558,21 @@ defined in the [CLDR](http://cldr.unicode.org). You most likely want to
 use one of those.
 
 -}
-float : Printer Float args msg -> (args -> Float) -> Name -> Text args msg
+float : Printer Float args node -> (args -> Float) -> Name -> Text args node
 float printer accessor name =
     TFloat printer (Placeholder accessor name)
 
 
 {-| Like `float` but for `Date` values.
 -}
-date : Printer Date args msg -> (args -> Date) -> Name -> Text args msg
+date : Printer Date args node -> (args -> Date) -> Name -> Text args node
 date printer accessor name =
     TDate printer (Placeholder accessor name)
 
 
 {-| Like `float` but for `Time` values.
 -}
-time : Printer Time args msg -> (args -> Time) -> Name -> Text args msg
+time : Printer Time args node -> (args -> Time) -> Name -> Text args node
 time printer accessor name =
     TTime printer (Placeholder accessor name)
 
@@ -586,7 +585,7 @@ should be choosen depending on the numeric value and its printed
 representation. You can use `count` within a plural text to insert the
 actual printed numerical value.
 
-    newMailsInfo : Translation { args | count : Float } msg
+    newMailsInfo : Translation { args | count : Float } node
     newMailsInfo =
         final "newMailsInfo" <|
             plural intPrinter toPluralForm .count "count" <|
@@ -623,7 +622,7 @@ above translation would look like this:
 
     import Cldr.De exposing (cardinal)
 
-    newMailsInfo : Translation { args | count : Float } msg
+    newMailsInfo : Translation { args | count : Float } node
     newMailsInfo =
         final "newMailsInfo" <|
             cardinal intPrinter .count "count" <|
@@ -646,12 +645,12 @@ defined forms which are not necessary)!
 
 -}
 plural :
-    Printer Float args msg
+    Printer Float args node
     -> (Float -> String -> PluralForm)
     -> (args -> Float)
     -> Name
-    -> AllPluralForms args msg
-    -> Text args msg
+    -> AllPluralForms args node
+    -> Text args node
 plural printer toPluralForm accessor name =
     TPlural printer toPluralForm (Placeholder accessor name)
 
@@ -659,7 +658,7 @@ plural printer toPluralForm accessor name =
 {-| Used within a form of a plural text, this will insert the numerical
 value using the printer which was provided to `plural`.
 -}
-count : Text args msg
+count : Text args node
 count =
     TCount
 
@@ -671,7 +670,7 @@ count =
 {-| Turn a `Translation` into a `String` by providing values for all
 placeholders.
 -}
-asStringWith : args -> Translation args msg -> String
+asStringWith : args -> Translation args node -> String
 asStringWith args translation =
     case translation of
         Final _ text ->
@@ -684,29 +683,39 @@ asStringWith args translation =
 {-| Turn a `Translation` which does not contain any placeholders into
 a `String`.
 -}
-asString : Translation {} msg -> String
+asString : Translation {} node -> String
 asString translation =
     asStringWith {} translation
 
 
-{-| Turn a `Translation` into a list of dom nodes. Take a look at the
-package documentation for examples of why this is useful.
+{-| Turn a `Translation` into a list of nodes by providing a way to turn
+a `String` into your particular node type. These can be `Html.text`, `Svg.text`
+or `Element.text`, for example. Take a look at the package documentation for
+examples of why this is useful.
+
+You probably want to define a helper function for the dom node type you are
+using:
+
+    asHtml : args -> Translation args (Html msg) -> List (Html msg)
+    asHtml =
+        Translation.asNodes Html.text
+
 -}
-asNodes : args -> Translation args msg -> List (Node msg)
-asNodes args translation =
+asNodes : (String -> node) -> args -> Translation args node -> List node
+asNodes asTextNode args translation =
     case translation of
         Final _ text ->
-            textToNodes Nothing args text
+            textToNodes asTextNode Nothing args text
 
         Fallback _ text ->
-            textToNodes Nothing args text
+            textToNodes asTextNode Nothing args text
 
 
 
 -- INTERNAL PRINT HELPER
 
 
-printText : Maybe String -> args -> Text args msg -> String
+printText : Maybe String -> args -> Text args node -> String
 printText maybeCount args text =
     case text of
         TText string ->
@@ -797,56 +806,56 @@ printText maybeCount args text =
                     ""
 
 
-textToNodes : Maybe (Text args msg) -> args -> Text args msg -> List (Node msg)
-textToNodes maybeCount args text =
+textToNodes : (String -> node) -> Maybe (Text args node) -> args -> Text args node -> List node
+textToNodes asTextNode maybeCount args text =
     case text of
         TText string ->
-            [ VirtualDom.text string ]
+            [ asTextNode string ]
 
         TTexts subTexts ->
             subTexts
-                |> List.map (textToNodes maybeCount args)
+                |> List.map (textToNodes asTextNode maybeCount args)
                 |> List.concat
 
         TString (Placeholder accessor _) ->
             [ args
                 |> accessor
-                |> VirtualDom.text
+                |> asTextNode
             ]
 
         TNode (Placeholder accessor _) subText ->
             [ subText
-                |> textToNodes maybeCount args
+                |> textToNodes asTextNode maybeCount args
                 |> accessor args
             ]
 
         TDelimited (Printer _ printer) subText ->
             subText
                 |> printer
-                |> textToNodes maybeCount args
+                |> textToNodes asTextNode maybeCount args
 
         TList (Printer _ printer) subTexts ->
             subTexts
                 |> printer
-                |> textToNodes maybeCount args
+                |> textToNodes asTextNode maybeCount args
 
         TFloat (Printer _ printer) (Placeholder accessor _) ->
             args
                 |> accessor
                 |> printer
-                |> textToNodes maybeCount args
+                |> textToNodes asTextNode maybeCount args
 
         TDate (Printer _ printer) (Placeholder accessor _) ->
             args
                 |> accessor
                 |> printer
-                |> textToNodes maybeCount args
+                |> textToNodes asTextNode maybeCount args
 
         TTime (Printer _ printer) (Placeholder accessor _) ->
             args
                 |> accessor
                 |> printer
-                |> textToNodes maybeCount args
+                |> textToNodes asTextNode maybeCount args
 
         TPlural (Printer _ printer) toPluralForm (Placeholder accessor _) allPluralForms ->
             let
@@ -867,12 +876,12 @@ textToNodes maybeCount args text =
                 printMaybeForm form =
                     form
                         |> Maybe.withDefault allPluralForms.other
-                        |> textToNodes (Just countAsText) args
+                        |> textToNodes asTextNode (Just countAsText) args
             in
             case pluralForm of
                 Other ->
                     allPluralForms.other
-                        |> textToNodes (Just countAsText) args
+                        |> textToNodes asTextNode (Just countAsText) args
 
                 Zero ->
                     printMaybeForm allPluralForms.zero
@@ -893,7 +902,7 @@ textToNodes maybeCount args text =
             case maybeCount of
                 Just count ->
                     count
-                        |> textToNodes Nothing args
+                        |> textToNodes asTextNode Nothing args
 
                 Nothing ->
                     -- TODO: should we prevent this via types?
@@ -905,19 +914,19 @@ textToNodes maybeCount args text =
 
 
 {-| -}
-type Locale args msg
-    = Locale (LocaleData args msg)
+type Locale args node
+    = Locale (LocaleData args node)
 
 
-type alias LocaleData args msg =
+type alias LocaleData args node =
     { translations : Dict String String
 
     -- printer
-    , delimitedPrinters : Dict (List Name) (Printer (Text args msg) args msg)
-    , listPrinters : Dict (List Name) (Printer (List (Text args msg)) args msg)
-    , floatPrinters : Dict (List Name) (Printer Float args msg)
-    , datePrinters : Dict (List Name) (Printer Date args msg)
-    , timePrinters : Dict (List Name) (Printer Time args msg)
+    , delimitedPrinters : Dict (List Name) (Printer (Text args node) args node)
+    , listPrinters : Dict (List Name) (Printer (List (Text args node)) args node)
+    , floatPrinters : Dict (List Name) (Printer Float args node)
+    , datePrinters : Dict (List Name) (Printer Date args node)
+    , timePrinters : Dict (List Name) (Printer Time args node)
 
     -- pluralization
     , toCardinalForm : Float -> String -> PluralForm
@@ -928,12 +937,12 @@ type alias LocaleData args msg =
 
 
 {-| -}
-locale : Locale args msg
+locale : Locale args node
 locale =
     Locale defaultLocaleData
 
 
-defaultLocaleData : LocaleData args msg
+defaultLocaleData : LocaleData args node
 defaultLocaleData =
     { translations = Dict.empty
 
@@ -953,7 +962,7 @@ defaultLocaleData =
 
 
 {-| -}
-addTranslations : List ( String, String ) -> Locale args msg -> Locale args msg
+addTranslations : List ( String, String ) -> Locale args node -> Locale args node
 addTranslations translationList (Locale localeData) =
     Locale
         { localeData
@@ -965,7 +974,7 @@ addTranslations translationList (Locale localeData) =
 
 
 {-| -}
-addDelimitedPrinter : Printer (Text args msg) args msg -> Locale args msg -> Locale args msg
+addDelimitedPrinter : Printer (Text args node) args node -> Locale args node -> Locale args node
 addDelimitedPrinter ((Printer names _) as printer) (Locale localeData) =
     Locale
         { localeData
@@ -975,7 +984,7 @@ addDelimitedPrinter ((Printer names _) as printer) (Locale localeData) =
 
 
 {-| -}
-addListPrinter : Printer (List (Text args msg)) args msg -> Locale args msg -> Locale args msg
+addListPrinter : Printer (List (Text args node)) args node -> Locale args node -> Locale args node
 addListPrinter ((Printer names _) as printer) (Locale localeData) =
     Locale
         { localeData
@@ -985,7 +994,7 @@ addListPrinter ((Printer names _) as printer) (Locale localeData) =
 
 
 {-| -}
-addFloatPrinter : Printer Float args msg -> Locale args msg -> Locale args msg
+addFloatPrinter : Printer Float args node -> Locale args node -> Locale args node
 addFloatPrinter ((Printer names _) as printer) (Locale localeData) =
     Locale
         { localeData
@@ -995,7 +1004,7 @@ addFloatPrinter ((Printer names _) as printer) (Locale localeData) =
 
 
 {-| -}
-addDatePrinter : Printer Date args msg -> Locale args msg -> Locale args msg
+addDatePrinter : Printer Date args node -> Locale args node -> Locale args node
 addDatePrinter ((Printer names _) as printer) (Locale localeData) =
     Locale
         { localeData
@@ -1005,7 +1014,7 @@ addDatePrinter ((Printer names _) as printer) (Locale localeData) =
 
 
 {-| -}
-addTimePrinter : Printer Time args msg -> Locale args msg -> Locale args msg
+addTimePrinter : Printer Time args node -> Locale args node -> Locale args node
 addTimePrinter ((Printer names _) as printer) (Locale localeData) =
     Locale
         { localeData
@@ -1015,21 +1024,21 @@ addTimePrinter ((Printer names _) as printer) (Locale localeData) =
 
 
 {-| -}
-addToCardinalForm : (Float -> String -> PluralForm) -> Locale args msg -> Locale args msg
+addToCardinalForm : (Float -> String -> PluralForm) -> Locale args node -> Locale args node
 addToCardinalForm toCardinalForm (Locale localeData) =
     Locale
         { localeData | toCardinalForm = toCardinalForm }
 
 
 {-| -}
-addToOrdinalForm : (Float -> String -> PluralForm) -> Locale args msg -> Locale args msg
+addToOrdinalForm : (Float -> String -> PluralForm) -> Locale args node -> Locale args node
 addToOrdinalForm toOrdinalForm (Locale localeData) =
     Locale
         { localeData | toOrdinalForm = toOrdinalForm }
 
 
 {-| -}
-addAllowedCardinalForms : List PluralForm -> Locale args msg -> Locale args msg
+addAllowedCardinalForms : List PluralForm -> Locale args node -> Locale args node
 addAllowedCardinalForms pluralForms (Locale localeData) =
     { localeData
         | allowedCardinalForms =
@@ -1041,7 +1050,7 @@ addAllowedCardinalForms pluralForms (Locale localeData) =
 
 
 {-| -}
-addAllowedOrdinalForms : List PluralForm -> Locale args msg -> Locale args msg
+addAllowedOrdinalForms : List PluralForm -> Locale args node -> Locale args node
 addAllowedOrdinalForms pluralForms (Locale localeData) =
     { localeData
         | allowedOrdinalForms =
@@ -1088,9 +1097,9 @@ makePluralFormsUnique =
 {-| -}
 translateTo :
     (List Name -> Maybe ArgType)
-    -> Locale args msg
-    -> Translation args msg
-    -> Translation args msg
+    -> Locale args node
+    -> Translation args node
+    -> Translation args node
 translateTo toArgType locale translation =
     case translation of
         Final name text ->
@@ -1109,10 +1118,10 @@ translateTo toArgType locale translation =
 translateText :
     (List Name -> Maybe ArgType)
     -> Maybe String
-    -> Locale args msg
+    -> Locale args node
     -> Name
-    -> Text args msg
-    -> Text args msg
+    -> Text args node
+    -> Text args node
 translateText toArgType maybeCount ((Locale localeData) as locale) name text =
     localeData.translations
         |> Dict.get name
@@ -1132,16 +1141,16 @@ translateText toArgType maybeCount ((Locale localeData) as locale) name text =
 
 icuToText :
     (List Name -> Maybe ArgType)
-    -> Locale args msg
+    -> Locale args node
     ->
-        { node : Dict Name (args -> (List (Node msg) -> Node msg))
+        { node : Dict Name (args -> (List node -> node))
         , string : Dict Name (args -> String)
         , float : Dict Name (args -> Float)
         , date : Dict Name (args -> Date)
         , time : Dict Name (args -> Time)
         }
     -> Icu.Message
-    -> Text args msg
+    -> Text args node
 icuToText toArgType locale accessors message =
     message
         |> List.map (icuPartToText toArgType locale accessors)
@@ -1150,16 +1159,16 @@ icuToText toArgType locale accessors message =
 
 icuPartToText :
     (List Name -> Maybe ArgType)
-    -> Locale args msg
+    -> Locale args node
     ->
-        { node : Dict Name (args -> (List (Node msg) -> Node msg))
+        { node : Dict Name (args -> (List node -> node))
         , string : Dict Name (args -> String)
         , float : Dict Name (args -> Float)
         , date : Dict Name (args -> Date)
         , time : Dict Name (args -> Time)
         }
     -> Icu.Part
-    -> Text args msg
+    -> Text args node
 icuPartToText toArgType ((Locale localeData) as locale) accessors part =
     let
         simplePlaceholder constructor placeholder otherNames printers accessorType =
@@ -1286,9 +1295,9 @@ icuPartToText toArgType ((Locale localeData) as locale) accessors part =
 
 
 allPluralForms :
-    (Icu.Message -> Text args msg)
+    (Icu.Message -> Text args node)
     -> List Icu.SubMessage
-    -> Maybe (AllPluralForms args msg)
+    -> Maybe (AllPluralForms args node)
 allPluralForms toText subMessages =
     subMessages
         |> List.foldl
@@ -1304,10 +1313,10 @@ allPluralForms toText subMessages =
 
 
 addPluralForm :
-    (Icu.Message -> Text args msg)
+    (Icu.Message -> Text args node)
     -> Icu.SubMessage
-    -> AllPluralForms args msg
-    -> AllPluralForms args msg
+    -> AllPluralForms args node
+    -> AllPluralForms args node
 addPluralForm toText subMessage allPluralForms =
     case subMessage of
         Icu.Named name message ->
@@ -1345,7 +1354,7 @@ addPluralForm toText subMessage allPluralForms =
 -- RETRIVE ARGUMENTS
 
 
-nodeAccessors : Text args msg -> Dict Name (args -> (List (Node msg) -> Node msg))
+nodeAccessors : Text args node -> Dict Name (args -> (List node -> node))
 nodeAccessors text =
     case text of
         TNode (Placeholder accessor name) _ ->
@@ -1355,7 +1364,7 @@ nodeAccessors text =
             descendWith nodeAccessors text
 
 
-stringAccessors : Text args msg -> Dict Name (args -> String)
+stringAccessors : Text args node -> Dict Name (args -> String)
 stringAccessors text =
     case text of
         TString (Placeholder accessor name) ->
@@ -1365,7 +1374,7 @@ stringAccessors text =
             descendWith stringAccessors text
 
 
-floatAccessors : Text args msg -> Dict Name (args -> Float)
+floatAccessors : Text args node -> Dict Name (args -> Float)
 floatAccessors text =
     case text of
         TFloat _ (Placeholder accessor name) ->
@@ -1378,7 +1387,7 @@ floatAccessors text =
             descendWith floatAccessors text
 
 
-dateAccessors : Text args msg -> Dict Name (args -> Date)
+dateAccessors : Text args node -> Dict Name (args -> Date)
 dateAccessors text =
     case text of
         TDate _ (Placeholder accessor name) ->
@@ -1388,7 +1397,7 @@ dateAccessors text =
             descendWith dateAccessors text
 
 
-timeAccessors : Text args msg -> Dict Name (args -> Time)
+timeAccessors : Text args node -> Dict Name (args -> Time)
 timeAccessors text =
     case text of
         TTime _ (Placeholder accessor name) ->
@@ -1399,8 +1408,8 @@ timeAccessors text =
 
 
 descendWith :
-    (Text args msg -> Dict Name a)
-    -> Text args msg
+    (Text args node -> Dict Name a)
+    -> Text args node
     -> Dict Name a
 descendWith extractor text =
     case text of
@@ -1439,7 +1448,7 @@ different placeholders and translations.
 -}
 toIcu :
     (ArgType -> IcuArg)
-    -> Translation args msg
+    -> Translation args node
     -> String
 toIcu fromArgType translation =
     case translation of
@@ -1452,8 +1461,8 @@ toIcu fromArgType translation =
 
 textToIcu :
     (ArgType -> IcuArg)
-    -> Maybe (Text args msg)
-    -> Text args msg
+    -> Maybe (Text args node)
+    -> Text args node
     -> String
 textToIcu fromArgType maybeCount text =
     let
@@ -1560,7 +1569,7 @@ textToIcu fromArgType maybeCount text =
 For example, `toElm "greeting" "Good morning, {name}!"` will produce the
 following function:
 
-    greeting : Translation { args | name : String } msg
+    greeting : Translation { args | name : String } node
     greeting =
         final "greeting" <|
             concat
@@ -1579,7 +1588,7 @@ toElm toArgType name icuMessage =
 
 {-| Given an ICU message, this function returns the Elm code for the type of
 the corresponding `Translation`. So `toElmType "Good morning, {name}!"` will
-produce `"Translation { args | name : String } msg`, for example.
+produce `"Translation { args | name : String } node`, for example.
 -}
 toElmType : (List String -> Maybe ArgType) -> String -> Result Parser.Error String
 toElmType toArgType icuMessage =
@@ -1620,7 +1629,7 @@ argsFromPart toArgType part =
                     case subMessages of
                         (Icu.Unnamed subMessage) :: [] ->
                             Dict.union
-                                (Dict.singleton name "List (Node msg) -> Node msg")
+                                (Dict.singleton name "List node -> node")
                                 (argsFromMessage toArgType subMessage)
 
                         _ ->
@@ -1705,7 +1714,7 @@ returnType : Dict String String -> String
 returnType args =
     [ "Translation"
     , arguments args
-    , "msg"
+    , "node"
     ]
         |> String.join " "
 

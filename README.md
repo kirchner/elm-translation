@@ -19,7 +19,7 @@ module Translations.En exposing (..)
 
 import Translation exposing (Translation, final, s)
 
-greeting : Translation args msg
+greeting : Translation args node
 greeting =
     final "greeting" <|
         s "Good morning!"
@@ -44,7 +44,7 @@ module Translations.En exposing (..)
 
 import Translation exposing (Translation, final, s, string, concat)
 
-question : Translation { args | name : String, email : String } msg
+question : Translation { args | name : String, email : String } node
 question =
     final "question" <|
         concat
@@ -79,18 +79,18 @@ should be **bold**. Instead of splitting the translation into parts or
 writing plain Html code in it, you can do the following:
 
 ```elm
-import Html exposing (Html, a, div, strong)
+import Html exposing (Html, a, div, strong, text)
 import Html.Attributes exposing (href)
 import Translation exposing (Translation, final, s, concat, node, asNodes)
 
 info :
     Translation
         { args
-            | docsLink : List (Node msg) -> Node msg
-            , contactLink : List (Node msg) -> Node msg
-            , strong : List (Node msg) -> Node msg
+            | docsLink : List node -> node
+            , contactLink : List node -> node
+            , strong : List node -> node
         }
-        msg
+        node
 info =
     final "info" <|
         concat
@@ -110,7 +110,7 @@ info =
 view : Html msg
 view =
     info
-        |> asNodes
+        |> asNodes text
             { docsLink = a [ href ".." ]
             , contactLink = a [ href " .." ]
             , strong = strong []
