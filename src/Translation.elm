@@ -135,6 +135,7 @@ module Translation
 import Date exposing (Date)
 import Dict exposing (Dict)
 import Internal.Icu as Icu
+import Parser
 import Set
 import String.Extra as String
 import Time exposing (Time)
@@ -1569,24 +1570,22 @@ following function:
                 ]
 
 -}
-toElm : (List String -> Maybe ArgType) -> String -> String -> Maybe String
+toElm : (List String -> Maybe ArgType) -> String -> String -> Result Parser.Error String
 toElm toArgType name icuMessage =
     icuMessage
         |> Icu.parse
-        |> Result.toMaybe
-        |> Maybe.map (icuToElm toArgType name)
+        |> Result.map (icuToElm toArgType name)
 
 
 {-| Given an ICU message, this function returns the Elm code for the type of
 the corresponding `Translation`. So `toElmType "Good morning, {name}!"` will
 produce `"Translation { args | name : String } msg`, for example.
 -}
-toElmType : (List String -> Maybe ArgType) -> String -> Maybe String
+toElmType : (List String -> Maybe ArgType) -> String -> Result Parser.Error String
 toElmType toArgType icuMessage =
     icuMessage
         |> Icu.parse
-        |> Result.toMaybe
-        |> Maybe.map
+        |> Result.map
             (argsFromMessage toArgType
                 >> returnType
             )
