@@ -61,6 +61,7 @@ module Translation
         , time
         , toElm
         , toElmType
+        , toFallbackElm
         , toIcu
         , translateTo
         )
@@ -128,7 +129,7 @@ module Translation
 
 # Code Generation
 
-@docs toElm, toElmType
+@docs toElm, toFallbackElm, toElmType
 
 -}
 
@@ -1583,7 +1584,16 @@ toElm : (List String -> Maybe ArgType) -> String -> String -> Result Parser.Erro
 toElm toArgType name icuMessage =
     icuMessage
         |> Icu.parse
-        |> Result.map (icuToElm toArgType name)
+        |> Result.map (icuToElm True toArgType name)
+
+
+{-| Like `toElm` but will produce a fallback translation.
+-}
+toFallbackElm : (List String -> Maybe ArgType) -> String -> String -> Result Parser.Error String
+toFallbackElm toArgType name icuMessage =
+    icuMessage
+        |> Icu.parse
+        |> Result.map (icuToElm False toArgType name)
 
 
 {-| Given an ICU message, this function returns the Elm code for the type of
@@ -1600,12 +1610,12 @@ toElmType toArgType icuMessage =
             )
 
 
-icuToElm : (List String -> Maybe ArgType) -> String -> Icu.Message -> String
-icuToElm toArgType name icuMessage =
+icuToElm : Bool -> (List String -> Maybe ArgType) -> String -> Icu.Message -> String
+icuToElm final toArgType name icuMessage =
     [ icuMessage
         |> argsFromMessage toArgType
         |> functionDeclaration name
-    , functionDefinition toArgType name icuMessage
+    , functionDefinition final toArgType name icuMessage
     ]
         |> String.join "\n"
 
@@ -1742,11 +1752,14 @@ arguments args =
             |> String.join " "
 
 
-functionDefinition : (List String -> Maybe ArgType) -> String -> Icu.Message -> String
-functionDefinition toArgType name icuMessage =
+functionDefinition : Bool -> (List String -> Maybe ArgType) -> String -> Icu.Message -> String
+functionDefinition final toArgType name icuMessage =
     let
         body =
-            [ [ "final "
+            [ [ if final then
+                    "final "
+                else
+                    "fallback "
               , quote name
               , " <|"
               ]
