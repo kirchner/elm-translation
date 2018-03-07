@@ -1567,8 +1567,8 @@ textToIcu fromArgType maybeCount text =
 
 
 {-| Given an ICU message, this function produces Elm code for a `Translation`.
-For example, `toElm "greeting" "Good morning, {name}!"` will produce the
-following function:
+For example, `toElm toArgType [] "greeting" "Good morning, {name}!"` will
+produce the following function:
 
     greeting : Translation { args | name : String } node
     greeting =
@@ -1579,21 +1579,37 @@ following function:
                 , s "!"
                 ]
 
+where
+
+    toArgType : List String -> Maybe ArgType
+    toArgType _ =
+        Just ArgString
+
 -}
-toElm : (List String -> Maybe ArgType) -> String -> String -> Result Parser.Error String
-toElm toArgType name icuMessage =
+toElm :
+    (List String -> Maybe ArgType)
+    -> List String
+    -> String
+    -> String
+    -> Result Parser.Error String
+toElm toArgType scope name icuMessage =
     icuMessage
         |> Icu.parse
-        |> Result.map (icuToElm True toArgType name)
+        |> Result.map (icuToElm True toArgType scope name)
 
 
 {-| Like `toElm` but will produce a fallback translation.
 -}
-toFallbackElm : (List String -> Maybe ArgType) -> String -> String -> Result Parser.Error String
-toFallbackElm toArgType name icuMessage =
+toFallbackElm :
+    (List String -> Maybe ArgType)
+    -> List String
+    -> String
+    -> String
+    -> Result Parser.Error String
+toFallbackElm toArgType scope name icuMessage =
     icuMessage
         |> Icu.parse
-        |> Result.map (icuToElm False toArgType name)
+        |> Result.map (icuToElm False toArgType scope name)
 
 
 {-| Given an ICU message, this function returns the Elm code for the type of
@@ -1610,12 +1626,12 @@ toElmType toArgType icuMessage =
             )
 
 
-icuToElm : Bool -> (List String -> Maybe ArgType) -> String -> Icu.Message -> String
-icuToElm final toArgType name icuMessage =
+icuToElm : Bool -> (List String -> Maybe ArgType) -> List String -> String -> Icu.Message -> String
+icuToElm final toArgType scope name icuMessage =
     [ icuMessage
         |> argsFromMessage toArgType
         |> functionDeclaration name
-    , functionDefinition final toArgType name icuMessage
+    , functionDefinition final toArgType scope name icuMessage
     ]
         |> String.join "\n"
 
@@ -1752,15 +1768,21 @@ arguments args =
             |> String.join " "
 
 
-functionDefinition : Bool -> (List String -> Maybe ArgType) -> String -> Icu.Message -> String
-functionDefinition final toArgType name icuMessage =
+functionDefinition :
+    Bool
+    -> (List String -> Maybe ArgType)
+    -> List String
+    -> String
+    -> Icu.Message
+    -> String
+functionDefinition final toArgType scope name icuMessage =
     let
         body =
             [ [ if final then
                     "final "
                 else
                     "fallback "
-              , quote name
+              , quote scopedName
               , " <|"
               ]
                 |> String.concat
@@ -1769,6 +1791,9 @@ functionDefinition final toArgType name icuMessage =
                 |> indent
             ]
                 |> String.join "\n"
+
+        scopedName =
+            String.join "." (scope ++ [ name ])
     in
     [ name ++ " ="
     , body
