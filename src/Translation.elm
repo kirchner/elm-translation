@@ -36,6 +36,7 @@ module Translation
         , addFloatPrinter
         , addListPrinter
         , addTimePrinter
+        , addToArgType
         , addToCardinalForm
         , addToOrdinalForm
         , addTranslations
@@ -920,7 +921,8 @@ type Locale args node
 
 
 type alias LocaleData args node =
-    { translations : Dict String String
+    { toArgType : List Name -> Maybe ArgType
+    , translations : Dict String String
 
     -- printer
     , delimitedPrinters : Dict (List Name) (Printer (Text args node) args node)
@@ -945,7 +947,8 @@ locale =
 
 defaultLocaleData : LocaleData args node
 defaultLocaleData =
-    { translations = Dict.empty
+    { toArgType = cldrToArgType
+    , translations = Dict.empty
 
     -- printer
     , delimitedPrinters = Dict.empty
@@ -960,6 +963,13 @@ defaultLocaleData =
     , allowedCardinalForms = [ Other ]
     , allowedOrdinalForms = [ Other ]
     }
+
+
+{-| -}
+addToArgType : (List Name -> Maybe ArgType) -> Locale args node -> Locale args node
+addToArgType toArgType (Locale localeData) =
+    Locale
+        { localeData | toArgType = toArgType }
 
 
 {-| -}
@@ -1097,19 +1107,18 @@ makePluralFormsUnique =
 
 {-| -}
 translateTo :
-    (List Name -> Maybe ArgType)
-    -> Locale args node
+    Locale args node
     -> Translation args node
     -> Translation args node
-translateTo toArgType locale translation =
+translateTo locale translation =
     case translation of
         Final name text ->
             Final name <|
-                translateText toArgType Nothing locale name text
+                translateText Nothing locale name text
 
         Fallback name text ->
             Fallback name <|
-                translateText toArgType Nothing locale name text
+                translateText Nothing locale name text
 
 
 
@@ -1117,19 +1126,17 @@ translateTo toArgType locale translation =
 
 
 translateText :
-    (List Name -> Maybe ArgType)
-    -> Maybe String
+    Maybe String
     -> Locale args node
     -> Name
     -> Text args node
     -> Text args node
-translateText toArgType maybeCount ((Locale localeData) as locale) name text =
+translateText maybeCount ((Locale localeData) as locale) name text =
     localeData.translations
         |> Dict.get name
         |> Maybe.andThen (Icu.parse >> Result.toMaybe)
         |> Maybe.map
-            (icuToText toArgType
-                locale
+            (icuToText locale
                 { node = nodeAccessors text
                 , string = stringAccessors text
                 , float = floatAccessors text
@@ -1141,8 +1148,7 @@ translateText toArgType maybeCount ((Locale localeData) as locale) name text =
 
 
 icuToText :
-    (List Name -> Maybe ArgType)
-    -> Locale args node
+    Locale args node
     ->
         { node : Dict Name (args -> (List node -> node))
         , string : Dict Name (args -> String)
@@ -1152,15 +1158,14 @@ icuToText :
         }
     -> Icu.Message
     -> Text args node
-icuToText toArgType locale accessors message =
+icuToText locale accessors message =
     message
-        |> List.map (icuPartToText toArgType locale accessors)
+        |> List.map (icuPartToText locale accessors)
         |> concat
 
 
 icuPartToText :
-    (List Name -> Maybe ArgType)
-    -> Locale args node
+    Locale args node
     ->
         { node : Dict Name (args -> (List node -> node))
         , string : Dict Name (args -> String)
@@ -1170,7 +1175,7 @@ icuPartToText :
         }
     -> Icu.Part
     -> Text args node
-icuPartToText toArgType ((Locale localeData) as locale) accessors part =
+icuPartToText ((Locale localeData) as locale) accessors part =
     let
         simplePlaceholder constructor placeholder otherNames printers accessorType =
             Maybe.map2
@@ -1190,7 +1195,7 @@ icuPartToText toArgType ((Locale localeData) as locale) accessors part =
             s text
 
         Icu.Argument placeholder names subMessages ->
-            case toArgType (placeholder :: names) of
+            case localeData.toArgType (placeholder :: names) of
                 Just ArgString ->
                     accessors.string
                         |> Dict.get placeholder
@@ -1208,7 +1213,7 @@ icuPartToText toArgType ((Locale localeData) as locale) accessors part =
                                 case subMessages of
                                     (Icu.Unnamed subMessage) :: [] ->
                                         node accessor placeholder <|
-                                            icuToText toArgType locale accessors subMessage
+                                            icuToText locale accessors subMessage
 
                                     _ ->
                                         s ""
@@ -1223,7 +1228,7 @@ icuPartToText toArgType ((Locale localeData) as locale) accessors part =
                                 |> Maybe.map
                                     (\printer ->
                                         delimited printer <|
-                                            icuToText toArgType locale accessors subMessage
+                                            icuToText locale accessors subMessage
                                     )
                                 |> Maybe.withDefault (s "")
 
@@ -1235,7 +1240,7 @@ icuPartToText toArgType ((Locale localeData) as locale) accessors part =
                         toText subMessage =
                             case subMessage of
                                 Icu.Unnamed actualMessage ->
-                                    icuToText toArgType locale accessors actualMessage
+                                    icuToText locale accessors actualMessage
 
                                 Icu.Named _ _ ->
                                     s ""
@@ -1270,7 +1275,7 @@ icuPartToText toArgType ((Locale localeData) as locale) accessors part =
                         )
                         (Dict.get otherNames localeData.floatPrinters)
                         (Dict.get placeholder accessors.float)
-                        (allPluralForms (icuToText toArgType locale accessors) subMessages)
+                        (allPluralForms (icuToText locale accessors) subMessages)
                         |> Maybe.withDefault (s "")
 
                 Just (ArgOrdinal otherNames) ->
@@ -1285,7 +1290,7 @@ icuPartToText toArgType ((Locale localeData) as locale) accessors part =
                         )
                         (Dict.get otherNames localeData.floatPrinters)
                         (Dict.get placeholder accessors.float)
-                        (allPluralForms (icuToText toArgType locale accessors) subMessages)
+                        (allPluralForms (icuToText locale accessors) subMessages)
                         |> Maybe.withDefault (s "")
 
                 Nothing ->

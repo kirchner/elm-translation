@@ -137,7 +137,7 @@ translateToTest =
                             |> addTranslations [ ( name, textOut ) ]
                 in
                 final name (s textIn)
-                    |> translateTo cldrToArgType targetLocale
+                    |> translateTo targetLocale
                     |> Expect.equal (final name (s textOut))
         , fuzz3 nameFuzzer nameFuzzer textFuzzer "a string placeholder" <|
             \name placeholder value ->
@@ -147,7 +147,7 @@ translateToTest =
                             |> addTranslations [ ( name, "{" ++ placeholder ++ "}" ) ]
                 in
                 final name (string .placeholder placeholder)
-                    |> translateTo cldrToArgType targetLocale
+                    |> translateTo targetLocale
                     |> asStringWith { placeholder = value }
                     |> Expect.equal value
         , fuzz3 nameFuzzer nameFuzzer Fuzz.float "a number placeholder" <|
@@ -157,10 +157,10 @@ translateToTest =
                         locale
                             |> addTranslations
                                 [ ( name, "{" ++ placeholder ++ ", number}" ) ]
-                            |> addFloatPrinter floatToString3
+                            |> addFloatPrinter floatToString2
                 in
                 final name (float floatToString .placeholder placeholder)
-                    |> translateTo cldrToArgType targetLocale
+                    |> translateTo targetLocale
                     |> asStringWith { placeholder = value }
                     |> Expect.equal ("<" ++ toString value ++ ">")
         , fuzz3 nameFuzzer nameFuzzer Fuzz.float "a date placeholder" <|
@@ -177,7 +177,7 @@ translateToTest =
                             |> addDatePrinter dateToString2
                 in
                 final name (date dateToString .placeholder placeholder)
-                    |> translateTo cldrToArgType targetLocale
+                    |> translateTo targetLocale
                     |> asStringWith { placeholder = value }
                     |> Expect.equal ("<" ++ toString value ++ ">")
         , fuzz3 nameFuzzer nameFuzzer Fuzz.float "a time placeholder" <|
@@ -193,7 +193,7 @@ translateToTest =
                             |> addTimePrinter timeToString2
                 in
                 final name (time timeToString .placeholder placeholder)
-                    |> translateTo cldrToArgType targetLocale
+                    |> translateTo targetLocale
                     |> asStringWith { placeholder = value }
                     |> Expect.equal ("<" ++ toString value ++ ">")
         , fuzz3 nameFuzzer textFuzzer textFuzzer "a delimited text" <|
@@ -206,7 +206,7 @@ translateToTest =
                             |> addDelimitedPrinter quote2
                 in
                 final name (delimited quote (s textOld))
-                    |> translateTo cldrToArgType targetLocale
+                    |> translateTo targetLocale
                     |> asString
                     |> Expect.equal ("<<" ++ textNew ++ ">>")
         , fuzz3 nameFuzzer (Fuzz.list textFuzzer) (Fuzz.list textFuzzer) "a list" <|
@@ -228,7 +228,7 @@ translateToTest =
                             |> addListPrinter andList2
                 in
                 final name (list andList (listOld |> List.map s))
-                    |> translateTo cldrToArgType targetLocale
+                    |> translateTo targetLocale
                     |> asString
                     |> Expect.equal (String.join " <and> " ("sthNew" :: listNew))
         , fuzz4 nameFuzzer nameFuzzer textFuzzer textFuzzer "a plural with only one form" <|
@@ -259,7 +259,7 @@ translateToTest =
                         , many = Nothing
                         }
                     )
-                    |> translateTo cldrToArgType targetLocale
+                    |> translateTo targetLocale
                     |> asStringWith { placeholder = 0 }
                     |> Expect.equal ("<0> " ++ textNew)
         , fuzz4 nameFuzzer nameFuzzer textFuzzer textFuzzer "a ordinal plural with only one form" <|
@@ -290,7 +290,7 @@ translateToTest =
                         , many = Nothing
                         }
                     )
-                    |> translateTo cldrToArgType targetLocale
+                    |> translateTo targetLocale
                     |> asStringWith { placeholder = 0 }
                     |> Expect.equal ("<0> " ++ textNew)
         ]
@@ -433,18 +433,7 @@ floatToString =
 
 floatToString2 : Printer Float args msg
 floatToString2 =
-    printer [] <|
-        \float ->
-            concat
-                [ s "<"
-                , s (toString float)
-                , s ">"
-                ]
-
-
-floatToString3 : Printer Float args msg
-floatToString3 =
-    printer [ "decimal", "default" ] <|
+    printer [ "decimal", "standard" ] <|
         \float ->
             concat
                 [ s "<"
