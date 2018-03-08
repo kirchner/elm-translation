@@ -27,6 +27,15 @@ asStringWithTest =
                 final name (string .placeholder placeholder)
                     |> asStringWith { placeholder = text }
                     |> Expect.equal text
+        , fuzz3 nameFuzzer nameFuzzer (Fuzz.list textFuzzer) "a list placeholder" <|
+            \name placeholder texts ->
+                let
+                    listPrinter =
+                        printer [] (String.join "+" >> s)
+                in
+                final name (list listPrinter .placeholder placeholder)
+                    |> asStringWith { placeholder = texts }
+                    |> Expect.equal (String.join "+" texts)
         , fuzz3 nameFuzzer nameFuzzer Fuzz.float "a float placeholder" <|
             \name placeholder value ->
                 final name (float floatToString .placeholder placeholder)
@@ -150,6 +159,24 @@ translateToTest =
                     |> translateTo targetLocale
                     |> asStringWith { placeholder = value }
                     |> Expect.equal value
+        , fuzz3 nameFuzzer nameFuzzer (Fuzz.list textFuzzer) "a list placeholder" <|
+            \name placeholder values ->
+                let
+                    targetLocale =
+                        locale
+                            |> addTranslations [ ( name, "{" ++ placeholder ++ ", list}" ) ]
+                            |> addListPrinter listPrinterB
+
+                    listPrinterA =
+                        printer [] (String.join "+" >> s)
+
+                    listPrinterB =
+                        printer [] (String.join "-" >> s)
+                in
+                final name (list listPrinterA .placeholder placeholder)
+                    |> translateTo targetLocale
+                    |> asStringWith { placeholder = values }
+                    |> Expect.equal (String.join "-" values)
         , fuzz3 nameFuzzer nameFuzzer Fuzz.float "a number placeholder" <|
             \name placeholder value ->
                 let
@@ -209,7 +236,7 @@ translateToTest =
                     |> translateTo targetLocale
                     |> asString
                     |> Expect.equal ("<<" ++ textNew ++ ">>")
-        , fuzz3 nameFuzzer (Fuzz.list textFuzzer) (Fuzz.list textFuzzer) "a list" <|
+        , fuzz3 nameFuzzer (Fuzz.list textFuzzer) (Fuzz.list textFuzzer) "a static list" <|
             \name listOld listNew ->
                 let
                     targetLocale =
@@ -225,9 +252,9 @@ translateToTest =
                                         |> String.concat
                                   )
                                 ]
-                            |> addListPrinter andList2
+                            |> addStaticListPrinter andList2
                 in
-                final name (list andList (listOld |> List.map s))
+                final name (staticList andList (listOld |> List.map s))
                     |> translateTo targetLocale
                     |> asString
                     |> Expect.equal (String.join " <and> " ("sthNew" :: listNew))
@@ -332,6 +359,30 @@ toIcuTest =
                     |> toIcu argTypeToCldr
                     |> Expect.equal
                         ("{" ++ placeholder ++ ", node, {" ++ text ++ "}}")
+        , fuzz2 nameFuzzer nameFuzzer "a list placeholder with an unnamed printer" <|
+            \name placeholder ->
+                let
+                    listPrinter =
+                        printer [] (\_ -> s "")
+                in
+                final name (list listPrinter .placeholder placeholder)
+                    |> toIcu argTypeToCldr
+                    |> Expect.equal ("{" ++ placeholder ++ ", list}")
+        , fuzz3 nameFuzzer nameFuzzer (Fuzz.list nameFuzzer) "a list placeholder with a named printer" <|
+            \name placeholder printerNames ->
+                let
+                    listPrinter =
+                        printer printerNames (\_ -> s "")
+                in
+                final name (list listPrinter .placeholder placeholder)
+                    |> toIcu argTypeToCldr
+                    |> Expect.equal
+                        ("{"
+                            ++ placeholder
+                            ++ ", "
+                            ++ String.join ", " ("list" :: printerNames)
+                            ++ "}"
+                        )
         , fuzz2 nameFuzzer nameFuzzer "a float with an unnamed printer" <|
             \name placeholder ->
                 (final name <|

@@ -6,9 +6,9 @@ module Translation
             , ArgDate
             , ArgDelimited
             , ArgFloat
-            , ArgList
             , ArgNode
             , ArgOrdinal
+            , ArgStaticList
             , ArgString
             , ArgTime
             )
@@ -35,6 +35,7 @@ module Translation
         , addDelimitedPrinter
         , addFloatPrinter
         , addListPrinter
+        , addStaticListPrinter
         , addTimePrinter
         , addToArgType
         , addToCardinalForm
@@ -58,6 +59,7 @@ module Translation
         , plural
         , printer
         , s
+        , staticList
         , string
         , time
         , toElm
@@ -91,12 +93,12 @@ module Translation
 
 ## Wrappers
 
-@docs delimited, list
+@docs delimited, staticList
 
 
 ## Placeholders
 
-@docs string, float, date, time
+@docs string, list, float, date, time
 
 @docs plural, count, PluralForm, AllPluralForms
 
@@ -118,7 +120,7 @@ module Translation
 
 @docs addToCardinalForm, addToOrdinalForm, addAllowedCardinalForms, addAllowedOrdinalForms
 
-@docs addDelimitedPrinter, addListPrinter, addFloatPrinter, addDatePrinter, addTimePrinter
+@docs addDelimitedPrinter, addStaticListPrinter, addListPrinter, addFloatPrinter, addDatePrinter, addTimePrinter
 
 
 # Exporting `Translation`s
@@ -175,11 +177,12 @@ type Text args node
     | TTexts (List (Text args node))
       -- with printers
     | TDelimited (Printer (Text args node) args node) (Text args node)
-    | TList (Printer (List (Text args node)) args node) (List (Text args node))
+    | TStaticList (Printer (List (Text args node)) args node) (List (Text args node))
       -- with placeholders
     | TString (Placeholder String args)
     | TNode (Placeholder (List node -> node) args) (Text args node)
       -- with printers and placeholders
+    | TList (Printer (List String) args node) (Placeholder (List String) args)
     | TFloat (Printer Float args node) (Placeholder Float args)
     | TDate (Printer Date args node) (Placeholder Date args)
     | TTime (Printer Time args node) (Placeholder Time args)
@@ -190,9 +193,10 @@ type Text args node
 
 {-| -}
 type ArgType
-    = ArgString
+    = ArgDelimited (List Name)
+    | ArgStaticList (List Name)
+    | ArgString
     | ArgNode
-    | ArgDelimited (List Name)
     | ArgList (List Name)
     | ArgFloat (List Name)
     | ArgDate (List Name)
@@ -266,6 +270,9 @@ cldrToArgType names =
             Just (ArgDelimited otherNames)
 
         "_" :: "list" :: otherNames ->
+            Just (ArgStaticList otherNames)
+
+        _ :: "list" :: otherNames ->
             Just (ArgList otherNames)
 
         _ :: "number" :: otherNames ->
@@ -313,17 +320,20 @@ cldrToArgType names =
 argTypeToCldr : ArgType -> IcuArg
 argTypeToCldr argType =
     case argType of
+        ArgDelimited names ->
+            OverwritePlaceholder "_" ("delimited" :: names)
+
+        ArgStaticList names ->
+            OverwritePlaceholder "_" ("list" :: names)
+
         ArgString ->
             TakePlaceholder []
 
         ArgNode ->
             TakePlaceholder [ "node" ]
 
-        ArgDelimited names ->
-            OverwritePlaceholder "_" ("delimited" :: names)
-
         ArgList names ->
-            OverwritePlaceholder "_" ("list" :: names)
+            TakePlaceholder ("list" :: names)
 
         ArgFloat names ->
             TakePlaceholder ("number" :: names)
@@ -488,7 +498,7 @@ this is like `concat` but you can specify how to actually join the
 
     and : List (Text args node) -> Text args node
     and =
-        list andPrinter
+        staticList andPrinter
 
     andPrinter : Printer (List (Text args node)) args node
     andPrinter =
@@ -528,9 +538,53 @@ Take a look at `kirchner/elm-cldr` which defines such helpers for all
 languages contained in the [CLDR](http://cldr.unicode.org).
 
 -}
-list : Printer (List (Text args node)) args node -> List (Text args node) -> Text args node
-list =
-    TList
+staticList : Printer (List (Text args node)) args node -> List (Text args node) -> Text args node
+staticList =
+    TStaticList
+
+
+{-| Create a placeholder for a list of `String`s. You have to
+provide a `Printer (List String) args node`:
+
+    fruitList : Translation { args | fruits : List String } node
+    fruitList =
+        final "fruitList" <|
+            concat
+                [ s "Do you really want to by "
+                , list andPrinter .fruits "fruits"
+                , s "?"
+                ]
+
+    andPrinter : Printer (List String) args node
+    andPrinter =
+        printer [ "list", "and" ] <|
+            \strings ->
+                case List.reverse strings of
+                    [] ->
+                        s ""
+
+                    lastString :: [] ->
+                        s lastString
+
+                    lastString :: rest ->
+                        [ [ s lastString
+                          , s " and "
+                          ]
+                        , rest
+                            |> List.intersperse (s ", ")
+                        ]
+                            |> List.concat
+                            |> List.reverse
+                            |> concat
+
+-}
+list :
+    Printer (List String) args node
+    -> (args -> List String)
+    -> Name
+    -> Text args node
+list printer accessor name =
+    TList printer (Placeholder accessor name)
 
 
 {-| Create a placeholder for a `Float`. You also need to provide
@@ -728,19 +782,25 @@ printText maybeCount args text =
                 |> List.map (printText maybeCount args)
                 |> String.concat
 
+        TDelimited (Printer _ printer) subText ->
+            subText
+                |> printer
+                |> printText maybeCount args
+
+        TStaticList (Printer _ printer) subTexts ->
+            subTexts
+                |> printer
+                |> printText maybeCount args
+
         TString (Placeholder accessor _) ->
             accessor args
 
         TNode (Placeholder accessor _) subText ->
             printText maybeCount args subText
 
-        TDelimited (Printer _ printer) subText ->
-            subText
-                |> printer
-                |> printText maybeCount args
-
-        TList (Printer _ printer) subTexts ->
-            subTexts
+        TList (Printer _ printer) (Placeholder accessor _) ->
+            args
+                |> accessor
                 |> printer
                 |> printText maybeCount args
 
@@ -819,6 +879,16 @@ textToNodes asTextNode maybeCount args text =
                 |> List.map (textToNodes asTextNode maybeCount args)
                 |> List.concat
 
+        TDelimited (Printer _ printer) subText ->
+            subText
+                |> printer
+                |> textToNodes asTextNode maybeCount args
+
+        TStaticList (Printer _ printer) subTexts ->
+            subTexts
+                |> printer
+                |> textToNodes asTextNode maybeCount args
+
         TString (Placeholder accessor _) ->
             [ args
                 |> accessor
@@ -831,13 +901,9 @@ textToNodes asTextNode maybeCount args text =
                 |> accessor args
             ]
 
-        TDelimited (Printer _ printer) subText ->
-            subText
-                |> printer
-                |> textToNodes asTextNode maybeCount args
-
-        TList (Printer _ printer) subTexts ->
-            subTexts
+        TList (Printer _ printer) (Placeholder accessor _) ->
+            args
+                |> accessor
                 |> printer
                 |> textToNodes asTextNode maybeCount args
 
@@ -926,7 +992,8 @@ type alias LocaleData args node =
 
     -- printer
     , delimitedPrinters : Dict (List Name) (Printer (Text args node) args node)
-    , listPrinters : Dict (List Name) (Printer (List (Text args node)) args node)
+    , staticListPrinters : Dict (List Name) (Printer (List (Text args node)) args node)
+    , listPrinters : Dict (List Name) (Printer (List String) args node)
     , floatPrinters : Dict (List Name) (Printer Float args node)
     , datePrinters : Dict (List Name) (Printer Date args node)
     , timePrinters : Dict (List Name) (Printer Time args node)
@@ -952,6 +1019,7 @@ defaultLocaleData =
 
     -- printer
     , delimitedPrinters = Dict.empty
+    , staticListPrinters = Dict.empty
     , listPrinters = Dict.empty
     , floatPrinters = Dict.empty
     , datePrinters = Dict.empty
@@ -995,7 +1063,17 @@ addDelimitedPrinter ((Printer names _) as printer) (Locale localeData) =
 
 
 {-| -}
-addListPrinter : Printer (List (Text args node)) args node -> Locale args node -> Locale args node
+addStaticListPrinter : Printer (List (Text args node)) args node -> Locale args node -> Locale args node
+addStaticListPrinter ((Printer names _) as printer) (Locale localeData) =
+    Locale
+        { localeData
+            | staticListPrinters =
+                Dict.insert names printer localeData.staticListPrinters
+        }
+
+
+{-| -}
+addListPrinter : Printer (List String) args node -> Locale args node -> Locale args node
 addListPrinter ((Printer names _) as printer) (Locale localeData) =
     Locale
         { localeData
@@ -1125,6 +1203,16 @@ translateTo locale translation =
 --  INTERNAL TRANSLATE HELPER
 
 
+type alias Placeholders args node =
+    { node : Dict Name (args -> (List node -> node))
+    , string : Dict Name (args -> String)
+    , list : Dict Name (args -> List String)
+    , float : Dict Name (args -> Float)
+    , date : Dict Name (args -> Date)
+    , time : Dict Name (args -> Time)
+    }
+
+
 translateText :
     Maybe String
     -> Locale args node
@@ -1139,6 +1227,7 @@ translateText maybeCount ((Locale localeData) as locale) name text =
             (icuToText locale
                 { node = nodeAccessors text
                 , string = stringAccessors text
+                , list = listAccessors text
                 , float = floatAccessors text
                 , date = dateAccessors text
                 , time = timeAccessors text
@@ -1147,34 +1236,14 @@ translateText maybeCount ((Locale localeData) as locale) name text =
         |> Maybe.withDefault text
 
 
-icuToText :
-    Locale args node
-    ->
-        { node : Dict Name (args -> (List node -> node))
-        , string : Dict Name (args -> String)
-        , float : Dict Name (args -> Float)
-        , date : Dict Name (args -> Date)
-        , time : Dict Name (args -> Time)
-        }
-    -> Icu.Message
-    -> Text args node
+icuToText : Locale args node -> Placeholders args node -> Icu.Message -> Text args node
 icuToText locale accessors message =
     message
         |> List.map (icuPartToText locale accessors)
         |> concat
 
 
-icuPartToText :
-    Locale args node
-    ->
-        { node : Dict Name (args -> (List node -> node))
-        , string : Dict Name (args -> String)
-        , float : Dict Name (args -> Float)
-        , date : Dict Name (args -> Date)
-        , time : Dict Name (args -> Time)
-        }
-    -> Icu.Part
-    -> Text args node
+icuPartToText : Locale args node -> Placeholders args node -> Icu.Part -> Text args node
 icuPartToText ((Locale localeData) as locale) accessors part =
     let
         simplePlaceholder constructor placeholder otherNames printers accessorType =
@@ -1196,6 +1265,40 @@ icuPartToText ((Locale localeData) as locale) accessors part =
 
         Icu.Argument placeholder names subMessages ->
             case localeData.toArgType (placeholder :: names) of
+                Just (ArgDelimited otherNames) ->
+                    case subMessages of
+                        (Icu.Unnamed subMessage) :: [] ->
+                            localeData.delimitedPrinters
+                                |> Dict.get otherNames
+                                |> Maybe.map
+                                    (\printer ->
+                                        delimited printer <|
+                                            icuToText locale accessors subMessage
+                                    )
+                                |> Maybe.withDefault (s "")
+
+                        _ ->
+                            s ""
+
+                Just (ArgStaticList otherNames) ->
+                    let
+                        toText subMessage =
+                            case subMessage of
+                                Icu.Unnamed actualMessage ->
+                                    icuToText locale accessors actualMessage
+
+                                Icu.Named _ _ ->
+                                    s ""
+                    in
+                    localeData.staticListPrinters
+                        |> Dict.get otherNames
+                        |> Maybe.map
+                            (\printer ->
+                                staticList printer <|
+                                    List.map toText subMessages
+                            )
+                        |> Maybe.withDefault (s "")
+
                 Just ArgString ->
                     accessors.string
                         |> Dict.get placeholder
@@ -1220,39 +1323,8 @@ icuPartToText ((Locale localeData) as locale) accessors part =
                             )
                         |> Maybe.withDefault (s "")
 
-                Just (ArgDelimited otherNames) ->
-                    case subMessages of
-                        (Icu.Unnamed subMessage) :: [] ->
-                            localeData.delimitedPrinters
-                                |> Dict.get otherNames
-                                |> Maybe.map
-                                    (\printer ->
-                                        delimited printer <|
-                                            icuToText locale accessors subMessage
-                                    )
-                                |> Maybe.withDefault (s "")
-
-                        _ ->
-                            s ""
-
                 Just (ArgList otherNames) ->
-                    let
-                        toText subMessage =
-                            case subMessage of
-                                Icu.Unnamed actualMessage ->
-                                    icuToText locale accessors actualMessage
-
-                                Icu.Named _ _ ->
-                                    s ""
-                    in
-                    localeData.listPrinters
-                        |> Dict.get otherNames
-                        |> Maybe.map
-                            (\printer ->
-                                list printer <|
-                                    List.map toText subMessages
-                            )
-                        |> Maybe.withDefault (s "")
+                    simplePlaceholder list placeholder otherNames .listPrinters .list
 
                 Just (ArgFloat otherNames) ->
                     simplePlaceholder float placeholder otherNames .floatPrinters .float
@@ -1380,6 +1452,16 @@ stringAccessors text =
             descendWith stringAccessors text
 
 
+listAccessors : Text args node -> Dict Name (args -> List String)
+listAccessors text =
+    case text of
+        TList _ (Placeholder accessor name) ->
+            Dict.singleton name accessor
+
+        _ ->
+            descendWith listAccessors text
+
+
 floatAccessors : Text args node -> Dict Name (args -> Float)
 floatAccessors text =
     case text of
@@ -1428,7 +1510,7 @@ descendWith extractor text =
             -- FIXME: should we extract arguments hidden in printers?
             extractor subText
 
-        TList _ subTexts ->
+        TStaticList _ subTexts ->
             -- FIXME: should we extract arguments hidden in printers?
             subTexts
                 |> List.map extractor
@@ -1494,6 +1576,25 @@ textToIcu fromArgType maybeCount text =
                 |> List.map (textToIcu fromArgType maybeCount)
                 |> String.concat
 
+        TDelimited (Printer wrapperNames _) subText ->
+            [ wrapWith (ArgDelimited wrapperNames) "_"
+            , subText
+                |> textToIcu fromArgType maybeCount
+                |> wrap
+            ]
+                |> String.join ", "
+                |> wrap
+
+        TStaticList (Printer wrapperNames _) subTexts ->
+            [ wrapWith (ArgStaticList wrapperNames) "_"
+            , subTexts
+                |> List.map (textToIcu fromArgType maybeCount)
+                |> String.join " "
+                |> wrap
+            ]
+                |> String.join ", "
+                |> wrap
+
         TString (Placeholder _ name) ->
             wrapWith ArgString name
                 |> wrap
@@ -1508,23 +1609,8 @@ textToIcu fromArgType maybeCount text =
                 |> String.concat
                 |> wrap
 
-        TDelimited (Printer wrapperNames _) subText ->
-            [ wrapWith (ArgDelimited wrapperNames) "_"
-            , subText
-                |> textToIcu fromArgType maybeCount
-                |> wrap
-            ]
-                |> String.join ", "
-                |> wrap
-
-        TList (Printer wrapperNames _) subTexts ->
-            [ wrapWith (ArgList wrapperNames) "_"
-            , subTexts
-                |> List.map (textToIcu fromArgType maybeCount)
-                |> String.join " "
-                |> wrap
-            ]
-                |> String.join ", "
+        TList (Printer printerNames _) (Placeholder _ name) ->
+            wrapWith (ArgList printerNames) name
                 |> wrap
 
         TFloat (Printer printerNames _) (Placeholder _ name) ->
@@ -1653,6 +1739,28 @@ argsFromPart toArgType part =
     case part of
         Icu.Argument name names subMessages ->
             case toArgType (name :: names) of
+                Just (ArgDelimited otherNames) ->
+                    case subMessages of
+                        (Icu.Unnamed subMessage) :: [] ->
+                            argsFromMessage toArgType subMessage
+
+                        _ ->
+                            Dict.empty
+
+                Just (ArgStaticList otherNames) ->
+                    let
+                        argsFromSubMessage subMessage =
+                            case subMessage of
+                                Icu.Named _ subMessage ->
+                                    Just (argsFromMessage toArgType subMessage)
+
+                                _ ->
+                                    Nothing
+                    in
+                    subMessages
+                        |> List.filterMap argsFromSubMessage
+                        |> List.foldl Dict.union Dict.empty
+
                 Just ArgString ->
                     Dict.singleton name "String"
 
@@ -1666,27 +1774,8 @@ argsFromPart toArgType part =
                         _ ->
                             Dict.empty
 
-                Just (ArgDelimited otherNames) ->
-                    case subMessages of
-                        (Icu.Unnamed subMessage) :: [] ->
-                            argsFromMessage toArgType subMessage
-
-                        _ ->
-                            Dict.empty
-
                 Just (ArgList otherNames) ->
-                    let
-                        argsFromSubMessage subMessage =
-                            case subMessage of
-                                Icu.Named _ subMessage ->
-                                    Just (argsFromMessage toArgType subMessage)
-
-                                _ ->
-                                    Nothing
-                    in
-                    subMessages
-                        |> List.filterMap argsFromSubMessage
-                        |> List.foldl Dict.union Dict.empty
+                    Dict.singleton name "List String"
 
                 Just (ArgFloat otherNames) ->
                     Dict.singleton name "Float"
@@ -1857,6 +1946,44 @@ partToElm toArgType part =
 
         Icu.Argument name names subMessages ->
             case toArgType (name :: names) of
+                Just (ArgDelimited otherNames) ->
+                    case subMessages of
+                        (Icu.Unnamed subMessage) :: [] ->
+                            [ [ "delimited"
+                              , camilize otherNames
+                              , "<|"
+                              ]
+                                |> String.join " "
+                            , subMessage
+                                |> messageToElm toArgType
+                                |> indent
+                            ]
+                                |> String.join "\n"
+
+                        _ ->
+                            ""
+
+                Just (ArgStaticList otherNames) ->
+                    let
+                        subMessageToElm subMessage =
+                            case subMessage of
+                                Icu.Unnamed subMessage ->
+                                    messageToElm toArgType subMessage
+
+                                _ ->
+                                    ""
+                    in
+                    [ [ "list"
+                      , camilize otherNames
+                      ]
+                        |> String.join " "
+                    , subMessages
+                        |> List.map subMessageToElm
+                        |> generateList
+                        |> indent
+                    ]
+                        |> String.join "\n"
+
                 Just ArgString ->
                     [ "string"
                     , accessor name
@@ -1882,43 +2009,8 @@ partToElm toArgType part =
                         _ ->
                             ""
 
-                Just (ArgDelimited otherNames) ->
-                    case subMessages of
-                        (Icu.Unnamed subMessage) :: [] ->
-                            [ [ "delimited"
-                              , camilize otherNames
-                              , "<|"
-                              ]
-                                |> String.join " "
-                            , subMessage
-                                |> messageToElm toArgType
-                                |> indent
-                            ]
-                                |> String.join "\n"
-
-                        _ ->
-                            ""
-
                 Just (ArgList otherNames) ->
-                    let
-                        subMessageToElm subMessage =
-                            case subMessage of
-                                Icu.Unnamed subMessage ->
-                                    messageToElm toArgType subMessage
-
-                                _ ->
-                                    ""
-                    in
-                    [ [ "list"
-                      , camilize otherNames
-                      ]
-                        |> String.join " "
-                    , subMessages
-                        |> List.map subMessageToElm
-                        |> generateList
-                        |> indent
-                    ]
-                        |> String.join "\n"
+                    simplePlaceholder "list" name otherNames
 
                 Just (ArgFloat otherNames) ->
                     simplePlaceholder "float" name otherNames

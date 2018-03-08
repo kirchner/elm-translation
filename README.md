@@ -269,14 +269,14 @@ alles?“"`. Also verbalizing lists is possible:
 ```elm
 module Translations.En exposing (..)
 
-import Translation exposing (Translation, final, s, list, concat)
+import Translation exposing (Translation, final, s, staticList, concat)
 
 membersInfo : Translation args node
 membersInfo =
     final "membersInfo" <|
         concat
             [ s "These are all our members: "
-            , list andPrinter
+            , staticList andPrinter
                 [ s "Alice"
                 , s "Bob"
                 , s "Cindy"
@@ -307,6 +307,45 @@ andPrinter =
 ```
 
 The printed result will be `"These are all our members: Alice, Bob and Cindy"`.
+
+Also, dynamic lists are possible:
+
+```elm
+module Translations.En exposing (..)
+
+import Translation exposing (Translation, final, s, list, concat)
+
+fruitList : Translation { args | fruits : List String } node
+fruitList =
+    final "fruitList" <|
+        concat
+            [ s "Do you really want to by "
+            , list andPrinter .fruits "fruits"
+            , s "?"
+            ]
+
+andPrinter : Printer (List String) args node
+andPrinter =
+    printer [ "list", "and" ] <|
+        \strings ->
+            case List.reverse strings of
+                [] ->
+                    s ""
+
+                lastString :: [] ->
+                    s lastString
+
+                lastString :: rest ->
+                    [ [ s lastString
+                      , s " and "
+                      ]
+                    , rest
+                        |> List.intersperse (s ", ")
+                    ]
+                        |> List.concat
+                        |> List.reverse
+                        |> concat
+```
 
 **Note:** `kirchner/elm-cldr` will eventually also expose printers for
 delimiters and lists.
