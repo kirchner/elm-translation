@@ -1,4 +1,5 @@
-# Translation
+# Translation [![Build Status](https://travis-ci.org/kirchner/elm-translation.svg?branch=master)](https://travis-ci.org/kirchner/elm-translation)
+
 
 This library helps you to translate and localize your application. It is meant
 to be used with [`kirchner/elm-cldr`](https://github.com/kirchner/elm-cldr),
