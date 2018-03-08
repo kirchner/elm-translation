@@ -69,7 +69,9 @@ module Translation
         , translateTo
         )
 
-{-|
+{-| Add typesafe translations to your Elm application. Take a look at the
+[README](package.elm-lang.org/packages/kirchner/elm-translation/1.0.0/) for
+a variety of examples.
 
 @docs Translation, Text
 
@@ -110,11 +112,51 @@ module Translation
 
 # Translating `Translation`s
 
+It is possible to dynamically replace translations. For example, if you have a translation
+
+    question : Translation { args | name : String, email : String } node
+    question =
+        final "question" <|
+            concat
+                [ s "Hello, "
+                , string .name "name"
+                , s "! Good to have you back. One question: is "
+                , string .email "email"
+                , s " still your email address?"
+                ]
+
+you can create a `Locale` like so
+
+    deLocale : Locale args node
+    deLocale =
+        Translation.locale
+            |> addTranslations
+                [ ( "question"
+                  , "Hallo, {name}! Schön, dass Du zurück bist."
+                        ++ " Eine Frage: ist {email} immer noch deine aktuelle Email-Adresse?"
+                  )
+                ]
+
+Now you can print the translation `question` replacing the text with the
+translation from `deLocale` if you do this
+
+    print name email =
+        question
+            |> translateTo deLocale
+            |> asStringWith
+                { name = name
+                , email = email
+                }
+
+Then `print "Alice" "alice@localhost"` is equal to `"Hallo, Alice! Schön, dass
+Du zurück bist. Eine Frage: ist alice@localhost immer noch deine aktuelle
+Email-Adresse?"`
+
 @docs translateTo
 
 @docs Locale, locale
 
-@docs ArgType, cldrToArgType
+@docs addToArgType, ArgType, cldrToArgType
 
 @docs addTranslations
 
@@ -127,10 +169,14 @@ module Translation
 
 @docs toIcu
 
-@docs IcuArg, argTypeToCldr
+@docs argTypeToCldr, IcuArg
 
 
 # Code Generation
+
+The following functions are only needed by
+[`kirchner/elm-translation-runner`](https://github.com/kirchner/elm-translation-runner),
+so it can generate Elm modules from JSON translation files.
 
 @docs toElm, toFallbackElm, toElmType
 
@@ -151,14 +197,14 @@ type alias Name =
 
 
 {-| A `Translation` is a piece of localized text in a specific language.
-You can turn it into a `String` using `asString`. It can also contain
-placeholders, for example `Translation { args | name : String } node`.
-You then have to use `asStringWith` and provide values for every
-placeholder.
+You can turn it into a `String` using [`asString`](#asString). It can also
+contain placeholders, for example `Translation { args | name : String } node`.
+You then have to use [`asStringWith`](#asStringWith) and provide values for
+every placeholder.
 
-It is also possible to turn a `Translation` into a list of Dom nodes
-using `asNodes`. Take a look the package documentation for an example.
-It's really convenient!
+It is also possible to turn a `Translation` into a list of Dom nodes using
+[`asNodes`](#asNodes). Take a look the package documentation for an
+example. It's really convenient!
 
 -}
 type Translation args node
@@ -316,7 +362,11 @@ cldrToArgType names =
             Nothing
 
 
-{-| -}
+{-| This is the "inverse" function to [`cldrToArgType`](#cldrToArgType). For
+example, when exporting a translation with a placeholder `float (printer
+[ "decimal", "standard" ] (...)) .duration "duration"` we want to get the
+ICU message `{duration, number, decimal, standard}`.
+-}
 argTypeToCldr : ArgType -> IcuArg
 argTypeToCldr argType =
     case argType of
@@ -359,8 +409,9 @@ argTypeToCldr argType =
 Usually the name should be a string representation of the function name
 used for the translation.
 
-When using `kirchner/elm-translation-runner`, final translations will be
-exported when running
+When using
+[`kirchner/elm-translation-runner`](https://github.com/kirchner/elm-translation-runner),
+final translations will be exported when running
 
     $ elm-translations generate-json
 
@@ -482,8 +533,9 @@ node accessor name =
                     s "What is this all for?"
                 ]
 
-Take a look at `kirchner/elm-cldr` which defines such helpers for all
-languages contained in the [CLDR](http://cldr.unicode.org).
+Eventually, their will be helpers for all languages contained in the
+[CLDR](http://cldr.unicode.org) at
+[`kirchner/elm-cldr`](https://github.com/kirchner/elm-cldr).
 
 -}
 delimited : Printer (Text args node) args node -> Text args node -> Text args node
@@ -534,8 +586,7 @@ this is like `concat` but you can specify how to actually join the
                     ]
                 ]
 
-Take a look at `kirchner/elm-cldr` which defines such helpers for all
-languages contained in the [CLDR](http://cldr.unicode.org).
+If you want to join a dynamic list of strings, take a look at [`list`](#list).
 
 -}
 staticList : Printer (List (Text args node)) args node -> List (Text args node) -> Text args node
@@ -608,9 +659,10 @@ a `Text`:
                     |> toString
                     |> s
 
-**Note:** The package `kirchner/elm-cldr` exposes several of these
-placeholder functions for all the number formats and locales which are
-defined in the [CLDR](http://cldr.unicode.org). You most likely want to
+**Note:** The package
+[`kirchner/elm-cldr`](https://github.com/kirchner/elm-cldr) exposes several
+of these placeholder functions for all the number formats and locales which
+are defined in the [CLDR](http://cldr.unicode.org). You most likely want to
 use one of those.
 
 -}
@@ -619,14 +671,14 @@ float printer accessor name =
     TFloat printer (Placeholder accessor name)
 
 
-{-| Like `float` but for `Date` values.
+{-| Like [`float`](#float) but for `Date` values.
 -}
 date : Printer Date args node -> (args -> Date) -> Name -> Text args node
 date printer accessor name =
     TDate printer (Placeholder accessor name)
 
 
-{-| Like `float` but for `Time` values.
+{-| Like [`float`](#float) but for `Time` values.
 -}
 time : Printer Time args node -> (args -> Time) -> Name -> Text args node
 time printer accessor name =
@@ -671,9 +723,9 @@ actual printed numerical value.
         else
             Other
 
-Take a look at `kirchner/elm-cldr`. You will find pluralization
-functions which are based on the pluralization rules of the
-[CLDR](http://cldr.unicode.org). For example, a German version of the
+Take a look at [`kirchner/elm-cldr`](https://github.com/kirchner/elm-cldr). You
+will find pluralization functions which are based on the pluralization rules of
+the [CLDR](http://cldr.unicode.org). For example, a German version of the
 above translation would look like this:
 
     import Cldr.De exposing (cardinal)
@@ -696,8 +748,8 @@ above translation would look like this:
                         ]
                 }
 
-So you never have to worry that you missed some pluralization form (or
-defined forms which are not necessary)!
+So you never have to worry that you might have missed some pluralization form
+(or defined forms which are not necessary)!
 
 -}
 plural :
@@ -712,7 +764,7 @@ plural printer toPluralForm accessor name =
 
 
 {-| Used within a form of a plural text, this will insert the numerical
-value using the printer which was provided to `plural`.
+value using the printer which was provided to [`plural`](#plural).
 -}
 count : Text args node
 count =
@@ -746,7 +798,8 @@ asString translation =
 
 {-| Turn a `Translation` into a list of nodes by providing a way to turn
 a `String` into your particular node type. These can be `Html.text`, `Svg.text`
-or `Element.text`, for example. Take a look at the package documentation for
+or `Element.text`, for example. Take a look at the
+[README](package.elm-lang.org/packages/kirchner/elm-translation/1.0.0/) for
 examples of why this is useful.
 
 You probably want to define a helper function for the dom node type you are
@@ -981,7 +1034,12 @@ textToNodes asTextNode maybeCount args text =
 ---- TRANSLATE
 
 
-{-| -}
+{-| Most importantly, you can store translations inside a `Locale` so you can
+use [`translateTo`](#translateTo) to dynamically change your translations. It
+also holds information on how to parse the ICU formatted translations, printers
+for the different types and pluralization rules. You can adjust these to your
+needs using the helper functions below.
+-}
 type Locale args node
     = Locale (LocaleData args node)
 
@@ -1033,14 +1091,29 @@ defaultLocaleData =
     }
 
 
-{-| -}
+{-| When parsing an ICU message, we have to decide which keywords correspond to
+which placeholders or printers. For example when using the default
+[`cldrToArgType`](#cldrToArgType) function, the message `"{duration,
+number, decimal, standard}"` should generate a float placeholder named
+"duration" using the printer with the name `[ "decimal", "standard" ]`.
+
+You problably only have to change this if you do not want to use
+[`kirchner/elm-cldr`](https://github.com/kirchner/elm-cldr) but provide
+your own custom printers.
+
+-}
 addToArgType : (List Name -> Maybe ArgType) -> Locale args node -> Locale args node
 addToArgType toArgType (Locale localeData) =
     Locale
-        { localeData | toArgType = toArgType }
+        { localeData
+            | toArgType = toArgType
+        }
 
 
-{-| -}
+{-| Add translations to your locale. The first element in the tuple is the key
+name. These correspond to the first String arguments provided to
+[`final`](#final) and [`fallback`](#fallback).
+-}
 addTranslations : List ( String, String ) -> Locale args node -> Locale args node
 addTranslations translationList (Locale localeData) =
     Locale
@@ -1526,9 +1599,9 @@ descendWith extractor text =
 
 {-| Turn a `Translation` into the (somewhat extended) [ICU Message
 Format](http://icu-project.org/apiref/icu4j/com/ibm/icu/text/MessageFormat.html).
-You probably never need this. We use this in
-`kirchner/elm-translation-runner` to export `Translation`s to JSON
-translation files.
+You probably never need this. We will eventually use this in
+[`kirchner/elm-translation-runner`](https://github.com/kirchner/elm-translation-runner)
+to export `Translation`s to JSON translation files.
 
 **Note:** This only works if you provide unique `Name`s for the
 different placeholders and translations.
@@ -1658,12 +1731,12 @@ textToIcu fromArgType maybeCount text =
 
 
 {-| Given an ICU message, this function produces Elm code for a `Translation`.
-For example, `toElm toArgType [] "greeting" "Good morning, {name}!"` will
+For example, `toElm toArgType [ "scope" ] "greeting" "Good morning, {name}!"` will
 produce the following function:
 
     greeting : Translation { args | name : String } node
     greeting =
-        final "greeting" <|
+        final "scope.greeting" <|
             concat
                 [ s "Good morning, "
                 , string .name "name"
