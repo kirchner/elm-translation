@@ -25,6 +25,7 @@ import Char
 import Dict exposing (Dict)
 import Parser exposing (..)
 import Parser.LanguageKit exposing (..)
+import Parser.LowLevel exposing (..)
 import Set
 
 
@@ -34,13 +35,37 @@ type alias Message =
 
 type Part
     = Text String
-    | Argument Name (List Name) (List SubMessage)
+    | Argument ArgumentData
     | Hash
 
 
+type alias ArgumentData =
+    { from : Int
+    , to : Int
+    , placeholder : Name
+    , names : List Name
+    , subMessages : List SubMessage
+    }
+
+
 type SubMessage
-    = Unnamed Message
-    | Named Name Message
+    = Unnamed UnnamedData
+    | Named NamedData
+
+
+type alias UnnamedData =
+    { from : Int
+    , to : Int
+    , message : Message
+    }
+
+
+type alias NamedData =
+    { from : Int
+    , to : Int
+    , name : Name
+    , message : Message
+    }
 
 
 type alias Name =
@@ -100,15 +125,24 @@ text =
 argument : Parser Part
 argument =
     inContext "an argument" <|
-        succeed identity
+        succeed
+            (\from data to ->
+                Argument
+                    { data
+                        | from = from
+                        , to = to
+                    }
+            )
+            |= getOffset
             |. symbol "{"
             |. spaces
             |= andThen (\placeholder -> namesHelp placeholder []) name
             |. spaces
+            |= getOffset
             |. symbol "}"
 
 
-namesHelp : String -> List String -> Parser Part
+namesHelp : String -> List String -> Parser ArgumentData
 namesHelp placeholder names =
     inContext "a list of names" <|
         oneOf
@@ -128,11 +162,11 @@ namesHelp placeholder names =
                             )
                             nextName
                         ]
-            , succeed (Argument placeholder (List.reverse names) [])
+            , succeed (ArgumentData 0 0 placeholder (List.reverse names) [])
             ]
 
 
-subMessagesHelp : String -> List String -> List SubMessage -> Parser Part
+subMessagesHelp : String -> List String -> List SubMessage -> Parser ArgumentData
 subMessagesHelp placeholder names subMessages =
     inContext "a list of sub messages" <|
         oneOf
@@ -141,22 +175,45 @@ subMessagesHelp placeholder names subMessages =
                     |= andThen
                         (\subMessage -> subMessagesHelp placeholder names (subMessage :: subMessages))
                         nextSubMessage
-            , succeed (Argument placeholder names (List.reverse subMessages))
+            , succeed (ArgumentData 0 0 placeholder names (List.reverse subMessages))
             ]
 
 
 nextSubMessage : Parser SubMessage
 nextSubMessage =
     oneOf
-        [ succeed Unnamed
+        [ succeed
+            (\from message to ->
+                Unnamed
+                    { from = from
+                    , to = to
+                    , message = message
+                    }
+            )
+            |= getOffset
             |. symbol "{"
             |= lazy (\_ -> message)
+            |= getOffset
             |. symbol "}"
-        , delayedCommitMap Named name <|
-            succeed identity
+        , delayedCommitMap
+            (\( from, name ) ( message, to ) ->
+                Named
+                    { from = from
+                    , to = to
+                    , name = name
+                    , message = message
+                    }
+            )
+            (succeed (,)
+                |= getOffset
+                |= name
+            )
+            (succeed (,)
                 |. symbol "{"
                 |= lazy (\_ -> message)
+                |= getOffset
                 |. symbol "}"
+            )
         ]
 
 

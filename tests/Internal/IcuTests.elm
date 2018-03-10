@@ -25,32 +25,152 @@ parseTest =
             \placeholder ->
                 ("{" ++ placeholder ++ "}")
                     |> parse
-                    |> Expect.equal (Ok [ Argument placeholder [] [] ])
+                    |> Expect.equal
+                        (Ok
+                            [ Argument
+                                { from = 0
+                                , to = 1 + String.length placeholder
+                                , placeholder = placeholder
+                                , names = []
+                                , subMessages = []
+                                }
+                            ]
+                        )
         , fuzz2 nameFuzzer nameFuzzer "a placeholder with one name" <|
             \placeholder name ->
                 ("{" ++ placeholder ++ ", " ++ name ++ "}")
                     |> parse
-                    |> Expect.equal (Ok [ Argument placeholder [ name ] [] ])
+                    |> Expect.equal
+                        (Ok
+                            [ Argument
+                                { from = 0
+                                , to = 3 + String.length placeholder + String.length name
+                                , placeholder = placeholder
+                                , names = [ name ]
+                                , subMessages = []
+                                }
+                            ]
+                        )
         , fuzz2 nameFuzzer textFuzzer "a placeholder with one unnamed subPart" <|
             \placeholder text ->
                 ("{" ++ placeholder ++ ", {" ++ text ++ "}}")
                     |> parse
-                    |> Expect.equal (Ok [ Argument placeholder [] [ Unnamed [ Text text ] ] ])
+                    |> Expect.equal
+                        (Ok
+                            [ Argument
+                                { from = 0
+                                , to = 5 + String.length placeholder + String.length text
+                                , placeholder = placeholder
+                                , names = []
+                                , subMessages =
+                                    [ Unnamed
+                                        { from = 3 + String.length placeholder
+                                        , to = 4 + String.length text + String.length placeholder
+                                        , message = [ Text text ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        )
         , fuzz3 nameFuzzer nameFuzzer textFuzzer "a placeholder with on named subpart" <|
             \placeholder name text ->
                 ("{" ++ placeholder ++ ", " ++ name ++ "{" ++ text ++ "}}")
                     |> parse
-                    |> Expect.equal (Ok [ Argument placeholder [] [ Named name [ Text text ] ] ])
+                    |> Expect.equal
+                        (Ok
+                            [ Argument
+                                { from = 0
+                                , to =
+                                    5
+                                        + String.length placeholder
+                                        + String.length name
+                                        + String.length text
+                                , placeholder = placeholder
+                                , names = []
+                                , subMessages =
+                                    [ Named
+                                        { name = name
+                                        , from =
+                                            String.length placeholder
+                                                + 3
+                                        , to =
+                                            String.length placeholder
+                                                + String.length name
+                                                + String.length text
+                                                + 4
+                                        , message = [ Text text ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        )
         , fuzz3 nameFuzzer nameFuzzer textFuzzer "a placeholder with one name and one unnamed subPart" <|
             \placeholder name text ->
                 ("{" ++ placeholder ++ ", " ++ name ++ ", {" ++ text ++ "}}")
                     |> parse
-                    |> Expect.equal (Ok [ Argument placeholder [ name ] [ Unnamed [ Text text ] ] ])
+                    |> Expect.equal
+                        (Ok
+                            [ Argument
+                                { from = 0
+                                , to =
+                                    7
+                                        + String.length placeholder
+                                        + String.length name
+                                        + String.length text
+                                , placeholder = placeholder
+                                , names = [ name ]
+                                , subMessages =
+                                    [ Unnamed
+                                        { from =
+                                            String.length placeholder
+                                                + String.length name
+                                                + 5
+                                        , to =
+                                            String.length placeholder
+                                                + String.length name
+                                                + String.length text
+                                                + 6
+                                        , message = [ Text text ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        )
         , fuzz4 nameFuzzer nameFuzzer nameFuzzer textFuzzer "a placeholder with one name and one named subPart" <|
             \placeholder name1 name2 text ->
                 ("{" ++ placeholder ++ ", " ++ name1 ++ ", " ++ name2 ++ "{" ++ text ++ "}}")
                     |> parse
-                    |> Expect.equal (Ok [ Argument placeholder [ name1 ] [ Named name2 [ Text text ] ] ])
+                    |> Expect.equal
+                        (Ok
+                            [ Argument
+                                { from = 0
+                                , to =
+                                    7
+                                        + String.length placeholder
+                                        + String.length name1
+                                        + String.length name2
+                                        + String.length text
+                                , placeholder = placeholder
+                                , names = [ name1 ]
+                                , subMessages =
+                                    [ Named
+                                        { from =
+                                            String.length placeholder
+                                                + String.length name1
+                                                + 5
+                                        , to =
+                                            String.length placeholder
+                                                + String.length name1
+                                                + 6
+                                                + String.length name2
+                                                + String.length text
+                                        , name = name2
+                                        , message = [ Text text ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        )
         ]
 
 

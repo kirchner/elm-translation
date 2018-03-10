@@ -6,11 +6,16 @@ module Translation
             , ArgDate
             , ArgDelimited
             , ArgFloat
+            , ArgList
             , ArgNode
             , ArgOrdinal
             , ArgStaticList
             , ArgString
             , ArgTime
+            )
+        , Error
+            ( ArgumentError
+            , ParserError
             )
         , IcuArg
             ( OverwritePlaceholder
@@ -27,6 +32,12 @@ module Translation
             , Zero
             )
         , Printer
+        , Problem
+            ( BadArgumentType
+            , ExpectingOnlyNamedSubMessages
+            , ExpectingOnlyUnnamedSubMessages
+            , ExpectingSingleUnnamedSubMessage
+            )
         , Text
         , Translation
         , addAllowedCardinalForms
@@ -178,7 +189,7 @@ The following functions are only needed by
 [`kirchner/elm-translation-runner`](https://github.com/kirchner/elm-translation-runner),
 so it can generate Elm modules from JSON translation files.
 
-@docs toElm, toFallbackElm, toElmType
+@docs toElm, toFallbackElm, toElmType, Error
 
 -}
 
@@ -1336,17 +1347,17 @@ icuPartToText ((Locale localeData) as locale) accessors part =
         Icu.Text text ->
             s text
 
-        Icu.Argument placeholder names subMessages ->
+        Icu.Argument { placeholder, names, subMessages } ->
             case localeData.toArgType (placeholder :: names) of
                 Just (ArgDelimited otherNames) ->
                     case subMessages of
-                        (Icu.Unnamed subMessage) :: [] ->
+                        (Icu.Unnamed { message }) :: [] ->
                             localeData.delimitedPrinters
                                 |> Dict.get otherNames
                                 |> Maybe.map
                                     (\printer ->
                                         delimited printer <|
-                                            icuToText locale accessors subMessage
+                                            icuToText locale accessors message
                                     )
                                 |> Maybe.withDefault (s "")
 
@@ -1357,10 +1368,10 @@ icuPartToText ((Locale localeData) as locale) accessors part =
                     let
                         toText subMessage =
                             case subMessage of
-                                Icu.Unnamed actualMessage ->
-                                    icuToText locale accessors actualMessage
+                                Icu.Unnamed { message } ->
+                                    icuToText locale accessors message
 
-                                Icu.Named _ _ ->
+                                Icu.Named _ ->
                                     s ""
                     in
                     localeData.staticListPrinters
@@ -1387,9 +1398,9 @@ icuPartToText ((Locale localeData) as locale) accessors part =
                         |> Maybe.map
                             (\accessor ->
                                 case subMessages of
-                                    (Icu.Unnamed subMessage) :: [] ->
+                                    (Icu.Unnamed { message }) :: [] ->
                                         node accessor placeholder <|
-                                            icuToText locale accessors subMessage
+                                            icuToText locale accessors message
 
                                     _ ->
                                         s ""
@@ -1470,7 +1481,7 @@ addPluralForm :
     -> AllPluralForms args node
 addPluralForm toText subMessage allPluralForms =
     case subMessage of
-        Icu.Named name message ->
+        Icu.Named { name, message } ->
             let
                 text =
                     toText message
@@ -1730,6 +1741,38 @@ textToIcu fromArgType maybeCount text =
 ---- GENERATING ELM CODE
 
 
+{-| These are the errors you can get when parsing an ICU formatted message.
+-}
+type Error
+    = ParserError Parser.Error
+    | ArgumentError
+        { source : String
+        , from : Int
+        , to : Int
+        , placeholder : String
+        , names : List String
+        , namedSubMessages :
+            List
+                { name : String
+                , from : Int
+                , to : Int
+                }
+        , unnamedSubMessages :
+            List
+                { from : Int
+                , to : Int
+                }
+        , problem : Problem
+        }
+
+
+type Problem
+    = BadArgumentType
+    | ExpectingSingleUnnamedSubMessage
+    | ExpectingOnlyUnnamedSubMessages
+    | ExpectingOnlyNamedSubMessages (List String)
+
+
 {-| Given an ICU message, this function produces Elm code for a `Translation`.
 For example, `toElm toArgType [ "scope" ] "greeting" "Good morning, {name}!"` will
 produce the following function:
@@ -1755,11 +1798,12 @@ toElm :
     -> List String
     -> String
     -> String
-    -> Result Parser.Error String
+    -> Result (List Error) String
 toElm toArgType scope name icuMessage =
     icuMessage
         |> Icu.parse
-        |> Result.map (icuToElm True toArgType scope name)
+        |> Result.mapError (ParserError >> List.singleton)
+        |> Result.andThen (icuToElm True toArgType icuMessage scope name)
 
 
 {-| Like `toElm` but will produce a fallback translation.
@@ -1769,129 +1813,209 @@ toFallbackElm :
     -> List String
     -> String
     -> String
-    -> Result Parser.Error String
+    -> Result (List Error) String
 toFallbackElm toArgType scope name icuMessage =
     icuMessage
         |> Icu.parse
-        |> Result.map (icuToElm False toArgType scope name)
+        |> Result.mapError (ParserError >> List.singleton)
+        |> Result.andThen (icuToElm False toArgType icuMessage scope name)
 
 
 {-| Given an ICU message, this function returns the Elm code for the type of
 the corresponding `Translation`. So `toElmType "Good morning, {name}!"` will
 produce `"Translation { args | name : String } node`, for example.
 -}
-toElmType : (List String -> Maybe ArgType) -> String -> Result Parser.Error String
+toElmType : (List String -> Maybe ArgType) -> String -> Result (List Error) String
 toElmType toArgType icuMessage =
     icuMessage
         |> Icu.parse
-        |> Result.map
-            (argsFromMessage toArgType
-                >> returnType
+        |> Result.mapError (ParserError >> List.singleton)
+        |> Result.andThen
+            (argsFromMessage toArgType icuMessage
+                >> Result.map returnType
             )
 
 
-icuToElm : Bool -> (List String -> Maybe ArgType) -> List String -> String -> Icu.Message -> String
-icuToElm final toArgType scope name icuMessage =
-    [ icuMessage
-        |> argsFromMessage toArgType
-        |> functionDeclaration name
-    , functionDefinition final toArgType scope name icuMessage
-    ]
-        |> String.join "\n"
+icuToElm :
+    Bool
+    -> (List String -> Maybe ArgType)
+    -> String
+    -> List String
+    -> String
+    -> Icu.Message
+    -> Result (List Error) String
+icuToElm final toArgType source scope name icuMessage =
+    Result.map2
+        (\declaration definition ->
+            [ declaration
+            , definition
+            ]
+                |> String.join "\n"
+        )
+        (icuMessage
+            |> argsFromMessage toArgType source
+            |> Result.map (functionDeclaration name)
+        )
+        (functionDefinition final toArgType source scope name icuMessage)
 
 
-argsFromMessage : (List String -> Maybe ArgType) -> Icu.Message -> Dict String String
-argsFromMessage toArgType message =
+argsFromMessage :
+    (List String -> Maybe ArgType)
+    -> String
+    -> Icu.Message
+    -> Result (List Error) (Dict String String)
+argsFromMessage toArgType source message =
     message
-        |> List.map (argsFromPart toArgType)
-        |> List.foldl Dict.union Dict.empty
+        |> foldrWithErrors
+            (argsFromPart toArgType source)
+            Dict.union
+            Dict.empty
 
 
-argsFromPart : (List String -> Maybe ArgType) -> Icu.Part -> Dict String String
-argsFromPart toArgType part =
+argsFromPart : (List String -> Maybe ArgType) -> String -> Icu.Part -> Result (List Error) (Dict String String)
+argsFromPart toArgType source part =
     case part of
-        Icu.Argument name names subMessages ->
-            case toArgType (name :: names) of
+        Icu.Argument { from, to, placeholder, names, subMessages } ->
+            let
+                { named, unnamed } =
+                    subMessages
+                        |> List.foldl
+                            (\subMessage sortedSubMessages ->
+                                case subMessage of
+                                    Icu.Named namedData ->
+                                        { sortedSubMessages
+                                            | named = namedData :: sortedSubMessages.named
+                                        }
+
+                                    Icu.Unnamed unnamedData ->
+                                        { sortedSubMessages
+                                            | unnamed = unnamedData :: sortedSubMessages.unnamed
+                                        }
+                            )
+                            { named = []
+                            , unnamed = []
+                            }
+
+                argumentError problem =
+                    Err
+                        [ ArgumentError
+                            { source = source
+                            , from = from
+                            , to = to
+                            , placeholder = placeholder
+                            , names = names
+                            , namedSubMessages =
+                                named
+                                    |> List.map
+                                        (\{ from, to, name } ->
+                                            { name = name
+                                            , from = from
+                                            , to = to
+                                            }
+                                        )
+                            , unnamedSubMessages =
+                                unnamed
+                                    |> List.map
+                                        (\{ from, to } ->
+                                            { from = from
+                                            , to = to
+                                            }
+                                        )
+                            , problem = problem
+                            }
+                        ]
+            in
+            case toArgType (placeholder :: names) of
                 Just (ArgDelimited otherNames) ->
                     case subMessages of
-                        (Icu.Unnamed subMessage) :: [] ->
-                            argsFromMessage toArgType subMessage
+                        (Icu.Unnamed { message }) :: [] ->
+                            argsFromMessage toArgType source message
 
                         _ ->
-                            Dict.empty
+                            argumentError ExpectingSingleUnnamedSubMessage
 
                 Just (ArgStaticList otherNames) ->
-                    let
-                        argsFromSubMessage subMessage =
-                            case subMessage of
-                                Icu.Named _ subMessage ->
-                                    Just (argsFromMessage toArgType subMessage)
+                    case named of
+                        [] ->
+                            unnamed
+                                |> foldrWithErrors
+                                    (.message >> argsFromMessage toArgType source)
+                                    Dict.union
+                                    Dict.empty
 
-                                _ ->
-                                    Nothing
-                    in
-                    subMessages
-                        |> List.filterMap argsFromSubMessage
-                        |> List.foldl Dict.union Dict.empty
+                        _ ->
+                            argumentError ExpectingOnlyUnnamedSubMessages
 
                 Just ArgString ->
-                    Dict.singleton name "String"
+                    Ok (Dict.singleton placeholder "String")
 
                 Just ArgNode ->
                     case subMessages of
-                        (Icu.Unnamed subMessage) :: [] ->
-                            Dict.union
-                                (Dict.singleton name "List node -> node")
-                                (argsFromMessage toArgType subMessage)
+                        (Icu.Unnamed { message }) :: [] ->
+                            argsFromMessage toArgType source message
+                                |> Result.map
+                                    (Dict.union (Dict.singleton placeholder "List node -> node"))
 
                         _ ->
-                            Dict.empty
+                            argumentError ExpectingSingleUnnamedSubMessage
 
                 Just (ArgList otherNames) ->
-                    Dict.singleton name "List String"
+                    Ok (Dict.singleton placeholder "List String")
 
                 Just (ArgFloat otherNames) ->
-                    Dict.singleton name "Float"
+                    Ok (Dict.singleton placeholder "Float")
 
                 Just (ArgDate otherNames) ->
-                    Dict.singleton name "Date"
+                    Ok (Dict.singleton placeholder "Date")
 
                 Just (ArgTime otherNames) ->
-                    Dict.singleton name "Time"
+                    Ok (Dict.singleton placeholder "Time")
 
                 Just (ArgCardinal otherNames) ->
-                    let
-                        argsFromSubMessage subMessage =
-                            case subMessage of
-                                Icu.Named _ subMessage ->
-                                    Just (argsFromMessage toArgType subMessage)
+                    case unnamed of
+                        [] ->
+                            named
+                                |> foldrWithErrors
+                                    (.message >> argsFromMessage toArgType source)
+                                    Dict.union
+                                    Dict.empty
 
-                                _ ->
-                                    Nothing
-                    in
-                    subMessages
-                        |> List.filterMap argsFromSubMessage
-                        |> List.foldl Dict.union (Dict.singleton name "Float")
+                        _ ->
+                            argumentError <|
+                                ExpectingOnlyNamedSubMessages
+                                    [ "other"
+                                    , "zero"
+                                    , "one"
+                                    , "two"
+                                    , "few"
+                                    , "many"
+                                    ]
 
                 Just (ArgOrdinal otherNames) ->
-                    let
-                        argsFromSubMessage subMessage =
-                            case subMessage of
-                                Icu.Named _ subMessage ->
-                                    Just (argsFromMessage toArgType subMessage)
+                    case unnamed of
+                        [] ->
+                            named
+                                |> foldrWithErrors
+                                    (.message >> argsFromMessage toArgType source)
+                                    Dict.union
+                                    Dict.empty
 
-                                _ ->
-                                    Nothing
-                    in
-                    subMessages
-                        |> List.filterMap argsFromSubMessage
-                        |> List.foldl Dict.union (Dict.singleton name "Float")
+                        _ ->
+                            argumentError <|
+                                ExpectingOnlyNamedSubMessages
+                                    [ "other"
+                                    , "zero"
+                                    , "one"
+                                    , "two"
+                                    , "few"
+                                    , "many"
+                                    ]
 
                 Nothing ->
-                    Dict.empty
+                    argumentError BadArgumentType
 
         _ ->
-            Dict.empty
+            Ok Dict.empty
 
 
 functionDeclaration : String -> Dict String String -> String
@@ -1938,56 +2062,63 @@ arguments args =
 functionDefinition :
     Bool
     -> (List String -> Maybe ArgType)
+    -> String
     -> List String
     -> String
     -> Icu.Message
-    -> String
-functionDefinition final toArgType scope name icuMessage =
-    let
-        body =
-            [ [ if final then
-                    "final "
-                else
-                    "fallback "
-              , quote scopedName
-              , " <|"
-              ]
-                |> String.concat
-            , icuMessage
-                |> messageToElm toArgType
-                |> indent
-            ]
-                |> String.join "\n"
+    -> Result (List Error) String
+functionDefinition final toArgType source scope name icuMessage =
+    messageToElm toArgType source icuMessage
+        |> Result.map
+            (\elm ->
+                let
+                    body =
+                        [ [ if final then
+                                "final "
+                            else
+                                "fallback "
+                          , quote scopedName
+                          , " <|"
+                          ]
+                            |> String.concat
+                        , indent elm
+                        ]
+                            |> String.join "\n"
 
-        scopedName =
-            String.join "." (scope ++ [ name ])
-    in
-    [ name ++ " ="
-    , body
-        |> indent
-    ]
-        |> String.join "\n"
+                    scopedName =
+                        String.join "." (scope ++ [ name ])
+                in
+                [ name ++ " ="
+                , body
+                    |> indent
+                ]
+                    |> String.join "\n"
+            )
 
 
-messageToElm : (List String -> Maybe ArgType) -> Icu.Message -> String
-messageToElm toArgType parts =
+messageToElm : (List String -> Maybe ArgType) -> String -> Icu.Message -> Result (List Error) String
+messageToElm toArgType source parts =
     case parts of
         part :: [] ->
             part
-                |> partToElm toArgType
+                |> partToElm toArgType source
 
         _ ->
-            [ "concat"
-            , parts
-                |> List.map (partToElm toArgType)
-                |> generateList
-                |> indent
-            ]
-                |> String.join "\n"
+            parts
+                |> collectWithErrors (partToElm toArgType source)
+                |> Result.map
+                    (\listElm ->
+                        [ "concat"
+                        , listElm
+                            |> generateList
+                            |> indent
+                        ]
+                            |> String.join "\n"
+                    )
 
 
-partToElm : (List String -> Maybe ArgType) -> Icu.Part -> String
-partToElm toArgType part =
+partToElm : (List String -> Maybe ArgType) -> String -> Icu.Part -> Result (List Error) String
+partToElm toArgType source part =
     let
         camilize names =
             case names of
@@ -2016,147 +2147,261 @@ partToElm toArgType part =
             , quote text
             ]
                 |> String.concat
+                |> Ok
 
-        Icu.Argument name names subMessages ->
-            case toArgType (name :: names) of
+        Icu.Argument { from, to, placeholder, names, subMessages } ->
+            let
+                { named, unnamed } =
+                    subMessages
+                        |> List.foldr
+                            (\subMessage sortedSubMessages ->
+                                case subMessage of
+                                    Icu.Named { name, message } ->
+                                        { sortedSubMessages
+                                            | named =
+                                                ( name, message )
+                                                    :: sortedSubMessages.named
+                                        }
+
+                                    Icu.Unnamed { message } ->
+                                        { sortedSubMessages
+                                            | unnamed = message :: sortedSubMessages.unnamed
+                                        }
+                            )
+                            { named = []
+                            , unnamed = []
+                            }
+
+                argumentError problem =
+                    Err
+                        [ ArgumentError
+                            { source = source
+                            , from = from
+                            , to = to
+                            , placeholder = placeholder
+                            , names = names
+                            , namedSubMessages =
+                                named
+                                    |> List.map
+                                        (\( name, subMessage ) ->
+                                            { name = name
+                                            , from = -1
+                                            , to = -1
+                                            }
+                                        )
+                            , unnamedSubMessages =
+                                unnamed
+                                    |> List.map
+                                        (\subMessage ->
+                                            { from = -1
+                                            , to = -1
+                                            }
+                                        )
+                            , problem = problem
+                            }
+                        ]
+            in
+            case toArgType (placeholder :: names) of
                 Just (ArgDelimited otherNames) ->
                     case subMessages of
-                        (Icu.Unnamed subMessage) :: [] ->
-                            [ [ "delimited"
-                              , camilize otherNames
-                              , "<|"
-                              ]
-                                |> String.join " "
-                            , subMessage
-                                |> messageToElm toArgType
-                                |> indent
-                            ]
-                                |> String.join "\n"
+                        (Icu.Unnamed { message }) :: [] ->
+                            message
+                                |> messageToElm toArgType source
+                                |> Result.map
+                                    (\elm ->
+                                        [ [ "delimited"
+                                          , camilize otherNames
+                                          , "<|"
+                                          ]
+                                            |> String.join " "
+                                        , indent elm
+                                        ]
+                                            |> String.join "\n"
+                                    )
 
                         _ ->
-                            ""
+                            argumentError ExpectingSingleUnnamedSubMessage
 
                 Just (ArgStaticList otherNames) ->
-                    let
-                        subMessageToElm subMessage =
-                            case subMessage of
-                                Icu.Unnamed subMessage ->
-                                    messageToElm toArgType subMessage
+                    case named of
+                        [] ->
+                            unnamed
+                                |> collectWithErrors (messageToElm toArgType source)
+                                |> Result.map
+                                    (\listElm ->
+                                        [ [ "list"
+                                          , camilize otherNames
+                                          ]
+                                            |> String.join " "
+                                        , listElm
+                                            |> generateList
+                                            |> indent
+                                        ]
+                                            |> String.join "\n"
+                                    )
 
-                                _ ->
-                                    ""
-                    in
-                    [ [ "list"
-                      , camilize otherNames
-                      ]
-                        |> String.join " "
-                    , subMessages
-                        |> List.map subMessageToElm
-                        |> generateList
-                        |> indent
-                    ]
-                        |> String.join "\n"
+                        _ ->
+                            argumentError ExpectingOnlyUnnamedSubMessages
 
                 Just ArgString ->
                     [ "string"
-                    , accessor name
-                    , quote name
+                    , accessor placeholder
+                    , quote placeholder
                     ]
                         |> String.join " "
+                        |> Ok
 
                 Just ArgNode ->
                     case subMessages of
-                        (Icu.Unnamed subMessage) :: [] ->
-                            [ [ "node"
-                              , accessor name
-                              , quote name
-                              , "<|"
-                              ]
-                                |> String.join " "
-                            , subMessage
-                                |> messageToElm toArgType
-                                |> indent
-                            ]
-                                |> String.join "\n"
+                        (Icu.Unnamed { message }) :: [] ->
+                            messageToElm toArgType source message
+                                |> Result.map
+                                    (\elm ->
+                                        [ [ "node"
+                                          , accessor placeholder
+                                          , quote placeholder
+                                          , "<|"
+                                          ]
+                                            |> String.join " "
+                                        , indent elm
+                                        ]
+                                            |> String.join "\n"
+                                    )
 
                         _ ->
-                            ""
+                            argumentError ExpectingSingleUnnamedSubMessage
 
                 Just (ArgList otherNames) ->
-                    simplePlaceholder "list" name otherNames
+                    Ok (simplePlaceholder "list" placeholder otherNames)
 
                 Just (ArgFloat otherNames) ->
-                    simplePlaceholder "float" name otherNames
+                    Ok (simplePlaceholder "float" placeholder otherNames)
 
                 Just (ArgDate otherNames) ->
-                    simplePlaceholder "date" name otherNames
+                    Ok (simplePlaceholder "date" placeholder otherNames)
 
                 Just (ArgTime otherNames) ->
-                    simplePlaceholder "time" name otherNames
+                    Ok (simplePlaceholder "time" placeholder otherNames)
 
                 Just (ArgCardinal otherNames) ->
-                    let
-                        keyValuePairs subMessage =
-                            case subMessage of
-                                Icu.Unnamed _ ->
-                                    Nothing
+                    case unnamed of
+                        [] ->
+                            let
+                                actualNames =
+                                    case otherNames of
+                                        [] ->
+                                            [ "decimalStandard" ]
 
-                                Icu.Named name subMessage ->
-                                    Just ( name, messageToElm toArgType subMessage )
+                                        _ ->
+                                            otherNames
+                            in
+                            named
+                                |> List.foldr
+                                    (\( name, subMessage ) result ->
+                                        case result of
+                                            Ok listElm ->
+                                                case messageToElm toArgType source subMessage of
+                                                    Ok elm ->
+                                                        Ok (( name, elm ) :: listElm)
 
-                        actualNames =
-                            case otherNames of
-                                [] ->
-                                    [ "decimalStandard" ]
+                                                    Err errors ->
+                                                        Err errors
 
-                                _ ->
-                                    otherNames
-                    in
-                    [ [ simplePlaceholder "cardinal" name actualNames
-                      , "<|"
-                      ]
-                        |> String.join " "
-                    , subMessages
-                        |> List.filterMap keyValuePairs
-                        |> generateRecord
-                        |> indent
-                    ]
-                        |> String.join "\n"
+                                            Err errors ->
+                                                case messageToElm toArgType source subMessage of
+                                                    Ok _ ->
+                                                        result
+
+                                                    Err nextErrors ->
+                                                        Err (errors ++ nextErrors)
+                                    )
+                                    (Ok [])
+                                |> Result.map
+                                    (\listNamedElm ->
+                                        [ [ simplePlaceholder "cardinal" placeholder actualNames
+                                          , "<|"
+                                          ]
+                                            |> String.join " "
+                                        , listNamedElm
+                                            |> generateRecord
+                                            |> indent
+                                        ]
+                                            |> String.join "\n"
+                                    )
+
+                        _ ->
+                            argumentError <|
+                                ExpectingOnlyNamedSubMessages
+                                    [ "other"
+                                    , "zero"
+                                    , "one"
+                                    , "two"
+                                    , "few"
+                                    , "many"
+                                    ]
 
                 Just (ArgOrdinal otherNames) ->
-                    let
-                        keyValuePairs subMessage =
-                            case subMessage of
-                                Icu.Unnamed _ ->
-                                    Nothing
+                    case unnamed of
+                        [] ->
+                            let
+                                actualNames =
+                                    case otherNames of
+                                        [] ->
+                                            [ "decimalStandard" ]
 
-                                Icu.Named name subMessage ->
-                                    Just ( name, messageToElm toArgType subMessage )
+                                        _ ->
+                                            otherNames
+                            in
+                            named
+                                |> List.foldr
+                                    (\( name, subMessage ) result ->
+                                        case result of
+                                            Ok listElm ->
+                                                case messageToElm toArgType source subMessage of
+                                                    Ok elm ->
+                                                        Ok (( name, elm ) :: listElm)
 
-                        actualNames =
-                            case otherNames of
-                                [] ->
-                                    [ "decimalStandard" ]
+                                                    Err errors ->
+                                                        Err errors
 
-                                _ ->
-                                    otherNames
-                    in
-                    [ [ simplePlaceholder "ordinal" name otherNames
-                      , "<|"
-                      ]
-                        |> String.join " "
-                    , subMessages
-                        |> List.filterMap keyValuePairs
-                        |> generateRecord
-                        |> indent
-                    ]
-                        |> String.join "\n"
+                                            Err errors ->
+                                                case messageToElm toArgType source subMessage of
+                                                    Ok _ ->
+                                                        result
+
+                                                    Err nextErrors ->
+                                                        Err (errors ++ nextErrors)
+                                    )
+                                    (Ok [])
+                                |> Result.map
+                                    (\listNamedElm ->
+                                        [ [ simplePlaceholder "cardinal" placeholder actualNames
+                                          , "<|"
+                                          ]
+                                            |> String.join " "
+                                        , listNamedElm
+                                            |> generateRecord
+                                            |> indent
+                                        ]
+                                            |> String.join "\n"
+                                    )
+
+                        _ ->
+                            argumentError <|
+                                ExpectingOnlyNamedSubMessages
+                                    [ "other"
+                                    , "zero"
+                                    , "one"
+                                    , "two"
+                                    , "few"
+                                    , "many"
+                                    ]
 
                 Nothing ->
-                    "s \"\""
+                    argumentError BadArgumentType
 
         Icu.Hash ->
-            "count"
+            Ok "count"
 
 
 
@@ -2222,3 +2467,65 @@ generateRecord elements =
             , "\n}"
             ]
                 |> String.concat
+
+
+
+---- ERROR HELPER
+
+
+foldrWithErrors :
+    (a -> Result (List err) b)
+    -> (b -> b -> b)
+    -> b
+    -> List a
+    -> Result (List err) b
+foldrWithErrors toResultB mergeB initialB listA =
+    listA
+        |> List.foldr
+            (\a result ->
+                case result of
+                    Ok b ->
+                        case toResultB a of
+                            Ok nextB ->
+                                Ok (mergeB b nextB)
+
+                            Err errors ->
+                                Err errors
+
+                    Err errors ->
+                        case toResultB a of
+                            Ok _ ->
+                                result
+
+                            Err nextErrors ->
+                                Err (errors ++ nextErrors)
+            )
+            (Ok initialB)
+
+
+collectWithErrors :
+    (a -> Result (List err) b)
+    -> List a
+    -> Result (List err) (List b)
+collectWithErrors toResultB listA =
+    listA
+        |> List.foldr
+            (\a result ->
+                case result of
+                    Ok listB ->
+                        case toResultB a of
+                            Ok nextB ->
+                                Ok (nextB :: listB)
+
+                            Err errors ->
+                                Err errors
+
+                    Err errors ->
+                        case toResultB a of
+                            Ok _ ->
+                                result
+
+                            Err nextErrors ->
+                                Err (errors ++ nextErrors)
+            )
+            (Ok [])
