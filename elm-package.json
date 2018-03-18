@@ -7,7 +7,8 @@
         "src"
     ],
     "exposed-modules": [
-        "Translation"
+        "Translation",
+        "Translation.Generate"
     ],
     "dependencies": {
         "elm-community/string-extra": "1.4.0 <= v < 2.0.0",
