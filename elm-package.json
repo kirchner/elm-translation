@@ -8,7 +8,8 @@
     ],
     "exposed-modules": [
         "Translation",
-        "Translation.Generate"
+        "Translation.Generate",
+        "Translation.Icu"
     ],
     "dependencies": {
         "elm-community/string-extra": "1.4.0 <= v < 2.0.0",

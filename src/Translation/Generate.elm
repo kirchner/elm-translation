@@ -23,8 +23,7 @@ module Translation.Generate
             , ExpectingOnlyUnnamedSubMessages
             , ExpectingSingleUnnamedSubMessage
             )
-        , fallback
-        , final
+        , function
         , typeSignature
         )
 
@@ -37,7 +36,7 @@ The following functions are only needed by
 [`kirchner/elm-translation-runner`](https://github.com/kirchner/elm-translation-runner),
 so it can generate Elm modules from JSON translation files.
 
-@docs final, fallback, typeSignature
+@docs function, typeSignature
 
 @docs Argument, Function
 
@@ -106,12 +105,12 @@ type Problem
 
 
 {-| Given an ICU message, this function produces Elm code for a `Translation`.
-For example, `final toArgument [ "scope" ] "greeting" "Good morning, {name}!"` will
+For example, `function toArgument [ "scope" ] "greeting" "Good morning, {name}!"` will
 produce the following function:
 
     greeting : Translation { args | name : String } node
     greeting =
-        final "scope.greeting" <|
+        translation "scope.greeting" <|
             concat
                 [ s "Good morning, "
                 , string .name "name"
@@ -125,32 +124,17 @@ where
         Just String
 
 -}
-final :
+function :
     (List String -> Maybe Argument)
     -> List String
     -> String
     -> String
     -> Result (List Error) ( String, Set String )
-final toArgType scope name icuMessage =
+function toArgType scope name icuMessage =
     icuMessage
         |> Icu.parse
         |> Result.mapError (ParserError >> List.singleton)
-        |> Result.andThen (icuToElm True toArgType icuMessage scope name)
-
-
-{-| Like `final` but will produce the code for a fallback translation.
--}
-fallback :
-    (List String -> Maybe Argument)
-    -> List String
-    -> String
-    -> String
-    -> Result (List Error) ( String, Set String )
-fallback toArgType scope name icuMessage =
-    icuMessage
-        |> Icu.parse
-        |> Result.mapError (ParserError >> List.singleton)
-        |> Result.andThen (icuToElm False toArgType icuMessage scope name)
+        |> Result.andThen (icuToElm toArgType icuMessage scope name)
 
 
 {-| Given an ICU message, this function returns the Elm code for the type of
@@ -173,14 +157,13 @@ typeSignature toArgType icuMessage =
 
 
 icuToElm :
-    Bool
-    -> (List String -> Maybe Argument)
+    (List String -> Maybe Argument)
     -> String
     -> List String
     -> String
     -> Icu.Message
     -> Result (List Error) ( String, Set String )
-icuToElm final toArgType source scope name icuMessage =
+icuToElm toArgType source scope name icuMessage =
     Result.map2
         (\declaration definition ->
             ( [ declaration
@@ -194,7 +177,7 @@ icuToElm final toArgType source scope name icuMessage =
             |> argsFromMessage toArgType source
             |> Result.map (functionDeclaration name)
         )
-        (functionDefinition final toArgType source scope name icuMessage)
+        (functionDefinition toArgType source scope name icuMessage)
 
 
 
@@ -247,34 +230,28 @@ arguments args =
 
 
 functionDefinition :
-    Bool
-    -> (List String -> Maybe Argument)
+    (List String -> Maybe Argument)
     -> String
     -> List String
     -> String
     -> Icu.Message
     -> Result (List Error) ( String, Set String )
-functionDefinition final toArgType source scope name icuMessage =
+functionDefinition toArgType source scope name icuMessage =
     messageToElm toArgType source icuMessage
         |> Result.map
             (Tuple.mapFirst <|
                 \elm ->
                     let
                         body =
-                            [ [ if final then
-                                    "final "
-                                else
-                                    "fallback "
-                              , quote scopedName
-                              , " <|"
+                            [ [ "translation [ "
+                              , (scope ++ [ name ])
+                                    |> String.join ", "
+                              , " ] <|"
                               ]
                                 |> String.concat
                             , indent elm
                             ]
                                 |> String.join "\n"
-
-                        scopedName =
-                            String.join "." (scope ++ [ name ])
                     in
                     [ name ++ " ="
                     , body

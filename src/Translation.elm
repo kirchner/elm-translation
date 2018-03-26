@@ -1,23 +1,6 @@
 module Translation
     exposing
         ( AllPluralForms
-        , ArgType
-            ( ArgCardinal
-            , ArgDate
-            , ArgDelimited
-            , ArgFloat
-            , ArgList
-            , ArgNode
-            , ArgOrdinal
-            , ArgStaticList
-            , ArgString
-            , ArgTime
-            )
-        , IcuArg
-            ( OverwritePlaceholder
-            , TakePlaceholder
-            )
-        , Locale
         , Name
         , PluralForm
             ( Few
@@ -30,41 +13,31 @@ module Translation
         , Printer
         , Text
         , Translation
-        , addAllowedCardinalForms
-        , addAllowedOrdinalForms
-        , addDatePrinter
-        , addDelimitedPrinter
-        , addFloatPrinter
-        , addListPrinter
-        , addStaticListPrinter
-        , addTimePrinter
-        , addToArgType
-        , addToCardinalForm
-        , addToOrdinalForm
-        , addTranslations
-        , argTypeToCldr
         , asNodes
         , asString
         , asStringWith
-        , cldrToArgType
         , concat
         , count
         , date
+        , dateArgs
         , delimited
-        , fallback
-        , final
         , float
+        , floatArgs
         , list
-        , locale
+        , listArgs
+        , name
         , node
+        , translation
+        , nodeArgs
         , plural
         , printer
+        , printerNames
         , s
         , staticList
         , string
+        , stringArgs
         , time
-        , toIcu
-        , translateTo
+        , timeArgs
         )
 
 {-| Add typesafe translations to your Elm application. Take a look at the
@@ -73,7 +46,7 @@ a variety of examples.
 
 @docs Translation, Text
 
-@docs final, fallback
+@docs translation
 
 @docs Name
 
@@ -105,78 +78,17 @@ a variety of examples.
 
 # Printers
 
-@docs Printer, printer
+@docs Printer, printer, printerNames
 
 
-# Translating `Translation`s
+# Getting Information about a `Translation`
 
-It is possible to dynamically replace translations. For example, if you have a translation
-
-    question : Translation { args | name : String, email : String } node
-    question =
-        final "question" <|
-            concat
-                [ s "Hello, "
-                , string .name "name"
-                , s "! Good to have you back. One question: is "
-                , string .email "email"
-                , s " still your email address?"
-                ]
-
-you can create a `Locale` like so
-
-    deLocale : Locale args node
-    deLocale =
-        Translation.locale
-            |> addTranslations
-                [ ( "question"
-                  , "Hallo, {name}! Schön, dass Du zurück bist."
-                        ++ " Eine Frage: ist {email} immer noch deine aktuelle Email-Adresse?"
-                  )
-                ]
-
-Now you can print the translation `question` replacing the text with the
-translation from `deLocale` if you do this
-
-    print name email =
-        question
-            |> translateTo deLocale
-            |> asStringWith
-                { name = name
-                , email = email
-                }
-
-Then `print "Alice" "alice@localhost"` is equal to `"Hallo, Alice! Schön, dass
-Du zurück bist. Eine Frage: ist alice@localhost immer noch deine aktuelle
-Email-Adresse?"`
-
-@docs translateTo
-
-@docs Locale, locale
-
-@docs addToArgType, ArgType, cldrToArgType
-
-@docs addTranslations
-
-@docs addToCardinalForm, addToOrdinalForm, addAllowedCardinalForms, addAllowedOrdinalForms
-
-@docs addDelimitedPrinter, addStaticListPrinter, addListPrinter, addFloatPrinter, addDatePrinter, addTimePrinter
-
-
-# Exporting `Translation`s
-
-@docs toIcu
-
-@docs argTypeToCldr, IcuArg
+@docs name, nodeArgs, stringArgs, listArgs, floatArgs, dateArgs, timeArgs
 
 -}
 
 import Date exposing (Date)
 import Dict exposing (Dict)
-import Internal.Icu as Icu
-import Parser
-import Set exposing (Set)
-import String.Extra as String
 import Time exposing (Time)
 
 
@@ -197,8 +109,30 @@ example. It's really convenient!
 
 -}
 type Translation args node
-    = Final String (Text args node)
-    | Fallback String (Text args node)
+    = Final (List String) (Text args node)
+    | Fallback (List String) (Text args node)
+
+
+{-| Returns the name of a `Translation`.
+-}
+name : Translation args node -> List Name
+name translation =
+    case translation of
+        Final name _ ->
+            name
+
+        Fallback name _ ->
+            name
+
+
+text : Translation args node -> Text args node
+text translation =
+    case translation of
+        Final _ text ->
+            text
+
+        Fallback _ text ->
+            text
 
 
 {-| This is the building block for your translations. `Text`s can
@@ -224,26 +158,6 @@ type Text args node
     | TPlural (Printer Float args node) (Float -> String -> PluralForm) (Placeholder Float args) (AllPluralForms args node)
       -- misc
     | TCount
-
-
-{-| -}
-type ArgType
-    = ArgDelimited (List Name)
-    | ArgStaticList (List Name)
-    | ArgString
-    | ArgNode
-    | ArgList (List Name)
-    | ArgFloat (List Name)
-    | ArgDate (List Name)
-    | ArgTime (List Name)
-    | ArgCardinal (List Name)
-    | ArgOrdinal (List Name)
-
-
-{-| -}
-type IcuArg
-    = TakePlaceholder (List Name)
-    | OverwritePlaceholder Name (List Name)
 
 
 {-| -}
@@ -274,6 +188,13 @@ printer =
     Printer
 
 
+{-| If you need to get the Names of a `Printer`.
+-}
+printerNames : Printer a args node -> List Name
+printerNames (Printer names _) =
+    names
+
+
 {-| This type represents all 6 plural forms defined by the
 [CLDR](http://cldr.unicode.org).
 -}
@@ -297,130 +218,17 @@ type alias AllPluralForms args node =
     }
 
 
-{-| -}
-cldrToArgType : List Name -> Maybe ArgType
-cldrToArgType names =
-    case names of
-        "_" :: "delimited" :: otherNames ->
-            Just (ArgDelimited otherNames)
-
-        "_" :: "list" :: otherNames ->
-            Just (ArgStaticList otherNames)
-
-        _ :: "list" :: otherNames ->
-            Just (ArgList otherNames)
-
-        _ :: "number" :: otherNames ->
-            (Just << ArgFloat) <|
-                case otherNames of
-                    [] ->
-                        [ "decimal", "standard" ]
-
-                    _ ->
-                        "decimal" :: otherNames
-
-        _ :: "date" :: otherNames ->
-            Just (ArgDate otherNames)
-
-        _ :: "time" :: otherNames ->
-            Just (ArgTime otherNames)
-
-        _ :: "plural" :: otherNames ->
-            case otherNames of
-                [] ->
-                    Just (ArgCardinal [ "decimal", "standard" ])
-
-                _ ->
-                    Just (ArgCardinal otherNames)
-
-        _ :: "selectordinal" :: otherNames ->
-            case otherNames of
-                [] ->
-                    Just (ArgOrdinal [ "decimal", "standard" ])
-
-                _ ->
-                    Just (ArgOrdinal otherNames)
-
-        _ :: "node" :: [] ->
-            Just ArgNode
-
-        _ :: [] ->
-            Just ArgString
-
-        _ ->
-            Nothing
-
-
-{-| This is the "inverse" function to [`cldrToArgType`](#cldrToArgType). For
-example, when exporting a translation with a placeholder `float (printer
-[ "decimal", "standard" ] (...)) .duration "duration"` we want to get the
-ICU message `{duration, number, decimal, standard}`.
--}
-argTypeToCldr : ArgType -> IcuArg
-argTypeToCldr argType =
-    case argType of
-        ArgDelimited names ->
-            OverwritePlaceholder "_" ("delimited" :: names)
-
-        ArgStaticList names ->
-            OverwritePlaceholder "_" ("list" :: names)
-
-        ArgString ->
-            TakePlaceholder []
-
-        ArgNode ->
-            TakePlaceholder [ "node" ]
-
-        ArgList names ->
-            TakePlaceholder ("list" :: names)
-
-        ArgFloat names ->
-            TakePlaceholder ("number" :: names)
-
-        ArgDate names ->
-            TakePlaceholder ("date" :: names)
-
-        ArgTime names ->
-            TakePlaceholder ("time" :: names)
-
-        ArgCardinal names ->
-            TakePlaceholder ("plural" :: names)
-
-        ArgOrdinal names ->
-            TakePlaceholder ("selectordinal" :: names)
-
-
 
 ---- TRANSLATION CONSTRUCTOR
 
 
-{-| Create a "final" `Translation` out of a `Text` by giving it a name.
-Usually the name should be a string representation of the function name
-used for the translation.
-
-When using
-[`kirchner/elm-translation-runner`](https://github.com/kirchner/elm-translation-runner),
-final translations will be exported when running
-
-    $ elm-translations generate-json
-
+{-| Create a `Translation` out of a `Text` by giving it a name.
+Usually the name should be a string representation of the function name used
+for the translation.
 -}
-final : Name -> Text args node -> Translation args node
-final =
+translation : List Name -> Text args node -> Translation args node
+translation =
     Final
-
-
-{-| Create a "fallback" translation. This works just as `final`, but
-when running
-
-    $ elm-translations generate-json
-
-the translation will **not** be exported.
-
--}
-fallback : Name -> Text args node -> Translation args node
-fallback =
-    Fallback
 
 
 
@@ -431,7 +239,7 @@ fallback =
 
     greeting : Translation args node
     greeting =
-        final "greeting" <|
+        translation "greeting" <|
             s "Good morning!"
 
 -}
@@ -444,7 +252,7 @@ s =
 
     longerGreeting : Translation args node
     longerGreeting =
-        final "longerGreeting" <|
+        translation "longerGreeting" <|
             concat
                 [ s "Good evening!\n"
                 , s "We are happy to have you here!"
@@ -465,7 +273,7 @@ concat texts =
 
     personalGreeting : Translation { args | name : String } node
     personalGreeting =
-        final "greeting" <|
+        translation "greeting" <|
             concat
                 [ "Hello, "
                 , string .name "name"
@@ -483,7 +291,7 @@ a node with a `Node.text` subnode containing the provided `Text`:
 
     question : Translation { args | strong : List node -> node) } node
     question =
-        final "question" <|
+        translation "question" <|
             concat
                 [ s "What is "
                 , node .strong "strong" <|
@@ -515,7 +323,7 @@ node accessor name =
 
     assumption : Translation args node
     assumption =
-        final "assumption" <|
+        translation "assumption" <|
             concat
                 [ s "You may ask yourself: "
                 , quote <|
@@ -565,7 +373,7 @@ this is like `concat` but you can specify how to actually join the
 
     membersInfo : Translation args node
     membersInfo =
-        final "membersInfo" <|
+        translation "membersInfo" <|
             concat
                 [ s "These are all our members: "
                 , and
@@ -588,7 +396,7 @@ provide a `Printer (List String) args node`:
 
     fruitList : Translation { args | fruits : List String } node
     fruitList =
-        final "fruitList" <|
+        translation "fruitList" <|
             concat
                 [ s "Do you really want to by "
                 , list andPrinter .fruits "fruits"
@@ -633,7 +441,7 @@ a `Text`:
 
     mailboxInfo : Translation { args | mailCount : Float } node
     mailboxInfo =
-        final "mailboxInfo" <|
+        translation "mailboxInfo" <|
             concat
                 [ "Number of new mails: "
                 , float intPrinter .mailCount "mailCount"
@@ -684,7 +492,7 @@ actual printed numerical value.
 
     newMailsInfo : Translation { args | count : Float } node
     newMailsInfo =
-        final "newMailsInfo" <|
+        translation "newMailsInfo" <|
             plural intPrinter toPluralForm .count "count" <|
                 { other =
                     concat
@@ -721,7 +529,7 @@ above translation would look like this:
 
     newMailsInfo : Translation { args | count : Float } node
     newMailsInfo =
-        final "newMailsInfo" <|
+        translation "newMailsInfo" <|
             cardinal intPrinter .count "count" <|
                 { other =
                     concat
@@ -1020,512 +828,65 @@ textToNodes asTextNode maybeCount args text =
 
 
 
----- TRANSLATE
-
-
-{-| Most importantly, you can store translations inside a `Locale` so you can
-use [`translateTo`](#translateTo) to dynamically change your translations. It
-also holds information on how to parse the ICU formatted translations, printers
-for the different types and pluralization rules. You can adjust these to your
-needs using the helper functions below.
--}
-type Locale args node
-    = Locale (LocaleData args node)
-
-
-type alias LocaleData args node =
-    { toArgType : List Name -> Maybe ArgType
-    , translations : Dict String String
-
-    -- printer
-    , delimitedPrinters : Dict (List Name) (Printer (Text args node) args node)
-    , staticListPrinters : Dict (List Name) (Printer (List (Text args node)) args node)
-    , listPrinters : Dict (List Name) (Printer (List String) args node)
-    , floatPrinters : Dict (List Name) (Printer Float args node)
-    , datePrinters : Dict (List Name) (Printer Date args node)
-    , timePrinters : Dict (List Name) (Printer Time args node)
-
-    -- pluralization
-    , toCardinalForm : Float -> String -> PluralForm
-    , toOrdinalForm : Float -> String -> PluralForm
-    , allowedCardinalForms : List PluralForm
-    , allowedOrdinalForms : List PluralForm
-    }
+---- RETRIEVE ARGUMENTS
 
 
 {-| -}
-locale : Locale args node
-locale =
-    Locale defaultLocaleData
+nodeArgs : Translation args node -> Dict Name (args -> (List node -> node))
+nodeArgs =
+    text >> nodeArgsHelp
 
 
-defaultLocaleData : LocaleData args node
-defaultLocaleData =
-    { toArgType = cldrToArgType
-    , translations = Dict.empty
-
-    -- printer
-    , delimitedPrinters = Dict.empty
-    , staticListPrinters = Dict.empty
-    , listPrinters = Dict.empty
-    , floatPrinters = Dict.empty
-    , datePrinters = Dict.empty
-    , timePrinters = Dict.empty
-
-    -- pluralization
-    , toCardinalForm = \_ _ -> Other
-    , toOrdinalForm = \_ _ -> Other
-    , allowedCardinalForms = [ Other ]
-    , allowedOrdinalForms = [ Other ]
-    }
-
-
-{-| When parsing an ICU message, we have to decide which keywords correspond to
-which placeholders or printers. For example when using the default
-[`cldrToArgType`](#cldrToArgType) function, the message `"{duration,
-number, decimal, standard}"` should generate a float placeholder named
-"duration" using the printer with the name `[ "decimal", "standard" ]`.
-
-You problably only have to change this if you do not want to use
-[`kirchner/elm-cldr`](https://github.com/kirchner/elm-cldr) but provide
-your own custom printers.
-
--}
-addToArgType : (List Name -> Maybe ArgType) -> Locale args node -> Locale args node
-addToArgType toArgType (Locale localeData) =
-    Locale
-        { localeData
-            | toArgType = toArgType
-        }
-
-
-{-| Add translations to your locale. The first element in the tuple is the key
-name. These correspond to the first String arguments provided to
-[`final`](#final) and [`fallback`](#fallback).
--}
-addTranslations : List ( String, String ) -> Locale args node -> Locale args node
-addTranslations translationList (Locale localeData) =
-    Locale
-        { localeData
-            | translations =
-                Dict.union
-                    (translationList |> Dict.fromList)
-                    localeData.translations
-        }
-
-
-{-| -}
-addDelimitedPrinter : Printer (Text args node) args node -> Locale args node -> Locale args node
-addDelimitedPrinter ((Printer names _) as printer) (Locale localeData) =
-    Locale
-        { localeData
-            | delimitedPrinters =
-                Dict.insert names printer localeData.delimitedPrinters
-        }
-
-
-{-| -}
-addStaticListPrinter : Printer (List (Text args node)) args node -> Locale args node -> Locale args node
-addStaticListPrinter ((Printer names _) as printer) (Locale localeData) =
-    Locale
-        { localeData
-            | staticListPrinters =
-                Dict.insert names printer localeData.staticListPrinters
-        }
-
-
-{-| -}
-addListPrinter : Printer (List String) args node -> Locale args node -> Locale args node
-addListPrinter ((Printer names _) as printer) (Locale localeData) =
-    Locale
-        { localeData
-            | listPrinters =
-                Dict.insert names printer localeData.listPrinters
-        }
-
-
-{-| -}
-addFloatPrinter : Printer Float args node -> Locale args node -> Locale args node
-addFloatPrinter ((Printer names _) as printer) (Locale localeData) =
-    Locale
-        { localeData
-            | floatPrinters =
-                Dict.insert names printer localeData.floatPrinters
-        }
-
-
-{-| -}
-addDatePrinter : Printer Date args node -> Locale args node -> Locale args node
-addDatePrinter ((Printer names _) as printer) (Locale localeData) =
-    Locale
-        { localeData
-            | datePrinters =
-                Dict.insert names printer localeData.datePrinters
-        }
-
-
-{-| -}
-addTimePrinter : Printer Time args node -> Locale args node -> Locale args node
-addTimePrinter ((Printer names _) as printer) (Locale localeData) =
-    Locale
-        { localeData
-            | timePrinters =
-                Dict.insert names printer localeData.timePrinters
-        }
-
-
-{-| -}
-addToCardinalForm : (Float -> String -> PluralForm) -> Locale args node -> Locale args node
-addToCardinalForm toCardinalForm (Locale localeData) =
-    Locale
-        { localeData | toCardinalForm = toCardinalForm }
-
-
-{-| -}
-addToOrdinalForm : (Float -> String -> PluralForm) -> Locale args node -> Locale args node
-addToOrdinalForm toOrdinalForm (Locale localeData) =
-    Locale
-        { localeData | toOrdinalForm = toOrdinalForm }
-
-
-{-| -}
-addAllowedCardinalForms : List PluralForm -> Locale args node -> Locale args node
-addAllowedCardinalForms pluralForms (Locale localeData) =
-    { localeData
-        | allowedCardinalForms =
-            pluralForms
-                |> List.append localeData.allowedCardinalForms
-                |> makePluralFormsUnique
-    }
-        |> Locale
-
-
-{-| -}
-addAllowedOrdinalForms : List PluralForm -> Locale args node -> Locale args node
-addAllowedOrdinalForms pluralForms (Locale localeData) =
-    { localeData
-        | allowedOrdinalForms =
-            pluralForms
-                |> List.append localeData.allowedOrdinalForms
-                |> makePluralFormsUnique
-    }
-        |> Locale
-
-
-makePluralFormsUnique : List PluralForm -> List PluralForm
-makePluralFormsUnique =
-    let
-        fromString form =
-            case form of
-                "Other" ->
-                    Other
-
-                "Zero" ->
-                    Zero
-
-                "One" ->
-                    One
-
-                "Two" ->
-                    Two
-
-                "Few" ->
-                    Few
-
-                "Many" ->
-                    Many
-
-                _ ->
-                    -- this cannot happen
-                    Other
-    in
-    List.map toString
-        >> Set.fromList
-        >> Set.toList
-        >> List.map fromString
-
-
-{-| -}
-translateTo :
-    Locale args node
-    -> Translation args node
-    -> Translation args node
-translateTo locale translation =
-    case translation of
-        Final name text ->
-            Final name <|
-                translateText Nothing locale name text
-
-        Fallback name text ->
-            Fallback name <|
-                translateText Nothing locale name text
-
-
-
---  INTERNAL TRANSLATE HELPER
-
-
-type alias Placeholders args node =
-    { node : Dict Name (args -> (List node -> node))
-    , string : Dict Name (args -> String)
-    , list : Dict Name (args -> List String)
-    , float : Dict Name (args -> Float)
-    , date : Dict Name (args -> Date)
-    , time : Dict Name (args -> Time)
-    }
-
-
-translateText :
-    Maybe String
-    -> Locale args node
-    -> Name
-    -> Text args node
-    -> Text args node
-translateText maybeCount ((Locale localeData) as locale) name text =
-    localeData.translations
-        |> Dict.get name
-        |> Maybe.andThen (Icu.parse >> Result.toMaybe)
-        |> Maybe.map
-            (icuToText locale
-                { node = nodeAccessors text
-                , string = stringAccessors text
-                , list = listAccessors text
-                , float = floatAccessors text
-                , date = dateAccessors text
-                , time = timeAccessors text
-                }
-            )
-        |> Maybe.withDefault text
-
-
-icuToText : Locale args node -> Placeholders args node -> Icu.Message -> Text args node
-icuToText locale accessors message =
-    message
-        |> List.map (icuPartToText locale accessors)
-        |> concat
-
-
-icuPartToText : Locale args node -> Placeholders args node -> Icu.Part -> Text args node
-icuPartToText ((Locale localeData) as locale) accessors part =
-    let
-        simplePlaceholder constructor placeholder otherNames printers accessorType =
-            Maybe.map2
-                (\printer accessor -> constructor printer accessor placeholder)
-                (localeData
-                    |> printers
-                    |> Dict.get otherNames
-                )
-                (accessors
-                    |> accessorType
-                    |> Dict.get placeholder
-                )
-                |> Maybe.withDefault (s "")
-    in
-    case part of
-        Icu.Text text ->
-            s text
-
-        Icu.Argument { placeholder, names, subMessages } ->
-            case localeData.toArgType (placeholder :: names) of
-                Just (ArgDelimited otherNames) ->
-                    case subMessages of
-                        (Icu.Unnamed { message }) :: [] ->
-                            localeData.delimitedPrinters
-                                |> Dict.get otherNames
-                                |> Maybe.map
-                                    (\printer ->
-                                        delimited printer <|
-                                            icuToText locale accessors message
-                                    )
-                                |> Maybe.withDefault (s "")
-
-                        _ ->
-                            s ""
-
-                Just (ArgStaticList otherNames) ->
-                    let
-                        toText subMessage =
-                            case subMessage of
-                                Icu.Unnamed { message } ->
-                                    icuToText locale accessors message
-
-                                Icu.Named _ ->
-                                    s ""
-                    in
-                    localeData.staticListPrinters
-                        |> Dict.get otherNames
-                        |> Maybe.map
-                            (\printer ->
-                                staticList printer <|
-                                    List.map toText subMessages
-                            )
-                        |> Maybe.withDefault (s "")
-
-                Just ArgString ->
-                    accessors.string
-                        |> Dict.get placeholder
-                        |> Maybe.map
-                            (\accessor ->
-                                string accessor placeholder
-                            )
-                        |> Maybe.withDefault (s "")
-
-                Just ArgNode ->
-                    accessors.node
-                        |> Dict.get placeholder
-                        |> Maybe.map
-                            (\accessor ->
-                                case subMessages of
-                                    (Icu.Unnamed { message }) :: [] ->
-                                        node accessor placeholder <|
-                                            icuToText locale accessors message
-
-                                    _ ->
-                                        s ""
-                            )
-                        |> Maybe.withDefault (s "")
-
-                Just (ArgList otherNames) ->
-                    simplePlaceholder list placeholder otherNames .listPrinters .list
-
-                Just (ArgFloat otherNames) ->
-                    simplePlaceholder float placeholder otherNames .floatPrinters .float
-
-                Just (ArgDate otherNames) ->
-                    simplePlaceholder date placeholder otherNames .datePrinters .date
-
-                Just (ArgTime otherNames) ->
-                    simplePlaceholder time placeholder otherNames .timePrinters .time
-
-                Just (ArgCardinal otherNames) ->
-                    Maybe.map3
-                        (\printer accessor allPluralForms ->
-                            plural
-                                printer
-                                localeData.toCardinalForm
-                                accessor
-                                placeholder
-                                allPluralForms
-                        )
-                        (Dict.get otherNames localeData.floatPrinters)
-                        (Dict.get placeholder accessors.float)
-                        (allPluralForms (icuToText locale accessors) subMessages)
-                        |> Maybe.withDefault (s "")
-
-                Just (ArgOrdinal otherNames) ->
-                    Maybe.map3
-                        (\printer accessor allPluralForms ->
-                            plural
-                                printer
-                                localeData.toOrdinalForm
-                                accessor
-                                placeholder
-                                allPluralForms
-                        )
-                        (Dict.get otherNames localeData.floatPrinters)
-                        (Dict.get placeholder accessors.float)
-                        (allPluralForms (icuToText locale accessors) subMessages)
-                        |> Maybe.withDefault (s "")
-
-                Nothing ->
-                    s ""
-
-        Icu.Hash ->
-            count
-
-
-allPluralForms :
-    (Icu.Message -> Text args node)
-    -> List Icu.SubMessage
-    -> Maybe (AllPluralForms args node)
-allPluralForms toText subMessages =
-    subMessages
-        |> List.foldl
-            (addPluralForm toText)
-            { other = s ""
-            , zero = Nothing
-            , one = Nothing
-            , two = Nothing
-            , few = Nothing
-            , many = Nothing
-            }
-        |> Just
-
-
-addPluralForm :
-    (Icu.Message -> Text args node)
-    -> Icu.SubMessage
-    -> AllPluralForms args node
-    -> AllPluralForms args node
-addPluralForm toText subMessage allPluralForms =
-    case subMessage of
-        Icu.Named { name, message } ->
-            let
-                text =
-                    toText message
-            in
-            case name of
-                "other" ->
-                    { allPluralForms | other = text }
-
-                "zero" ->
-                    { allPluralForms | zero = Just text }
-
-                "one" ->
-                    { allPluralForms | one = Just text }
-
-                "two" ->
-                    { allPluralForms | two = Just text }
-
-                "few" ->
-                    { allPluralForms | few = Just text }
-
-                "many" ->
-                    { allPluralForms | many = Just text }
-
-                _ ->
-                    allPluralForms
-
-        _ ->
-            allPluralForms
-
-
-
--- RETRIEVE ARGUMENTS
-
-
-nodeAccessors : Text args node -> Dict Name (args -> (List node -> node))
-nodeAccessors text =
+nodeArgsHelp : Text args node -> Dict Name (args -> (List node -> node))
+nodeArgsHelp text =
     case text of
         TNode (Placeholder accessor name) _ ->
             Dict.singleton name accessor
 
         _ ->
-            descendWith nodeAccessors text
+            descendWith nodeArgsHelp text
 
 
-stringAccessors : Text args node -> Dict Name (args -> String)
-stringAccessors text =
+{-| -}
+stringArgs : Translation args node -> Dict Name (args -> String)
+stringArgs =
+    text >> stringArgsHelp
+
+
+stringArgsHelp : Text args node -> Dict Name (args -> String)
+stringArgsHelp text =
     case text of
         TString (Placeholder accessor name) ->
             Dict.singleton name accessor
 
         _ ->
-            descendWith stringAccessors text
+            descendWith stringArgsHelp text
 
 
-listAccessors : Text args node -> Dict Name (args -> List String)
-listAccessors text =
+{-| -}
+listArgs : Translation args node -> Dict Name (args -> List String)
+listArgs =
+    text >> listArgsHelp
+
+
+listArgsHelp : Text args node -> Dict Name (args -> List String)
+listArgsHelp text =
     case text of
         TList _ (Placeholder accessor name) ->
             Dict.singleton name accessor
 
         _ ->
-            descendWith listAccessors text
+            descendWith listArgsHelp text
 
 
-floatAccessors : Text args node -> Dict Name (args -> Float)
-floatAccessors text =
+{-| -}
+floatArgs : Translation args node -> Dict Name (args -> Float)
+floatArgs =
+    text >> floatArgsHelp
+
+
+floatArgsHelp : Text args node -> Dict Name (args -> Float)
+floatArgsHelp text =
     case text of
         TFloat _ (Placeholder accessor name) ->
             Dict.singleton name accessor
@@ -1534,27 +895,39 @@ floatAccessors text =
             Dict.singleton name accessor
 
         _ ->
-            descendWith floatAccessors text
+            descendWith floatArgsHelp text
 
 
-dateAccessors : Text args node -> Dict Name (args -> Date)
-dateAccessors text =
+{-| -}
+dateArgs : Translation args node -> Dict Name (args -> Date)
+dateArgs =
+    text >> dateArgsHelp
+
+
+dateArgsHelp : Text args node -> Dict Name (args -> Date)
+dateArgsHelp text =
     case text of
         TDate _ (Placeholder accessor name) ->
             Dict.singleton name accessor
 
         _ ->
-            descendWith dateAccessors text
+            descendWith dateArgsHelp text
 
 
-timeAccessors : Text args node -> Dict Name (args -> Time)
-timeAccessors text =
+{-| -}
+timeArgs : Translation args node -> Dict Name (args -> Time)
+timeArgs =
+    text >> timeArgsHelp
+
+
+timeArgsHelp : Text args node -> Dict Name (args -> Time)
+timeArgsHelp text =
     case text of
         TTime _ (Placeholder accessor name) ->
             Dict.singleton name accessor
 
         _ ->
-            descendWith timeAccessors text
+            descendWith timeArgsHelp text
 
 
 descendWith :
@@ -1583,133 +956,133 @@ descendWith extractor text =
 
 
 
----- EXPORT TO ICU MESSAGE FORMAT
-
-
-{-| Turn a `Translation` into the (somewhat extended) [ICU Message
-Format](http://icu-project.org/apiref/icu4j/com/ibm/icu/text/MessageFormat.html).
-You probably never need this. We will eventually use this in
-[`kirchner/elm-translation-runner`](https://github.com/kirchner/elm-translation-runner)
-to export `Translation`s to JSON translation files.
-
-**Note:** This only works if you provide unique `Name`s for the
-different placeholders and translations.
-
--}
-toIcu :
-    (ArgType -> IcuArg)
-    -> Translation args node
-    -> String
-toIcu fromArgType translation =
-    case translation of
-        Final _ text ->
-            textToIcu fromArgType Nothing text
-
-        Fallback _ text ->
-            textToIcu fromArgType Nothing text
-
-
-textToIcu :
-    (ArgType -> IcuArg)
-    -> Maybe (Text args node)
-    -> Text args node
-    -> String
-textToIcu fromArgType maybeCount text =
-    let
-        wrap string =
-            "{" ++ string ++ "}"
-
-        wrapWith argType placeholder =
-            case fromArgType argType of
-                TakePlaceholder names ->
-                    (placeholder :: names)
-                        |> String.join ", "
-
-                OverwritePlaceholder newPlaceholder names ->
-                    (newPlaceholder :: names)
-                        |> String.join ", "
-    in
-    case text of
-        TText string ->
-            string
-
-        TTexts subTexts ->
-            subTexts
-                |> List.map (textToIcu fromArgType maybeCount)
-                |> String.concat
-
-        TDelimited (Printer wrapperNames _) subText ->
-            [ wrapWith (ArgDelimited wrapperNames) "_"
-            , subText
-                |> textToIcu fromArgType maybeCount
-                |> wrap
-            ]
-                |> String.join ", "
-                |> wrap
-
-        TStaticList (Printer wrapperNames _) subTexts ->
-            [ wrapWith (ArgStaticList wrapperNames) "_"
-            , subTexts
-                |> List.map (textToIcu fromArgType maybeCount)
-                |> String.join " "
-                |> wrap
-            ]
-                |> String.join ", "
-                |> wrap
-
-        TString (Placeholder _ name) ->
-            wrapWith ArgString name
-                |> wrap
-
-        TNode (Placeholder _ name) subText ->
-            [ wrapWith ArgNode name
-            , ", "
-            , subText
-                |> textToIcu fromArgType maybeCount
-                |> wrap
-            ]
-                |> String.concat
-                |> wrap
-
-        TList (Printer printerNames _) (Placeholder _ name) ->
-            wrapWith (ArgList printerNames) name
-                |> wrap
-
-        TFloat (Printer printerNames _) (Placeholder _ name) ->
-            wrapWith (ArgFloat printerNames) name
-                |> wrap
-
-        TDate (Printer printerNames _) (Placeholder _ name) ->
-            wrapWith (ArgDate printerNames) name
-                |> wrap
-
-        TTime (Printer printerNames _) (Placeholder _ name) ->
-            wrapWith (ArgTime printerNames) name
-                |> wrap
-
-        TPlural (Printer printerNames _) _ (Placeholder _ name) allPluralForms ->
-            -- TODO: Ordinal?
-            let
-                pluralFormToIcu form text =
-                    form ++ wrap (textToIcu fromArgType Nothing text)
-            in
-            [ wrapWith (ArgCardinal printerNames) name
-            , [ ( "other", Just allPluralForms.other )
-              , ( "zero", allPluralForms.zero )
-              , ( "one", allPluralForms.one )
-              , ( "two", allPluralForms.two )
-              , ( "few", allPluralForms.few )
-              , ( "many", allPluralForms.many )
-              ]
-                |> List.filterMap
-                    (\( form, maybeText ) ->
-                        maybeText
-                            |> Maybe.map (pluralFormToIcu form)
-                    )
-                |> String.join " "
-            ]
-                |> String.join ", "
-                |> wrap
-
-        TCount ->
-            "#"
+------ EXPORT TO ICU MESSAGE FORMAT
+--
+--
+--{-| Turn a `Translation` into the (somewhat extended) [ICU Message
+--Format](http://icu-project.org/apiref/icu4j/com/ibm/icu/text/MessageFormat.html).
+--You probably never need this. We will eventually use this in
+--[`kirchner/elm-translation-runner`](https://github.com/kirchner/elm-translation-runner)
+--to export `Translation`s to JSON translation files.
+--
+--**Note:** This only works if you provide unique `Name`s for the
+--different placeholders and translations.
+--
+---}
+--toIcu :
+--    (ArgType -> IcuArg)
+--    -> Translation args node
+--    -> String
+--toIcu fromArgType translation =
+--    case translation of
+--        Final _ text ->
+--            textToIcu fromArgType Nothing text
+--
+--        Fallback _ text ->
+--            textToIcu fromArgType Nothing text
+--
+--
+--textToIcu :
+--    (ArgType -> IcuArg)
+--    -> Maybe (Text args node)
+--    -> Text args node
+--    -> String
+--textToIcu fromArgType maybeCount text =
+--    let
+--        wrap string =
+--            "{" ++ string ++ "}"
+--
+--        wrapWith argType placeholder =
+--            case fromArgType argType of
+--                TakePlaceholder names ->
+--                    (placeholder :: names)
+--                        |> String.join ", "
+--
+--                OverwritePlaceholder newPlaceholder names ->
+--                    (newPlaceholder :: names)
+--                        |> String.join ", "
+--    in
+--    case text of
+--        TText string ->
+--            string
+--
+--        TTexts subTexts ->
+--            subTexts
+--                |> List.map (textToIcu fromArgType maybeCount)
+--                |> String.concat
+--
+--        TDelimited (Printer wrapperNames _) subText ->
+--            [ wrapWith (ArgDelimited wrapperNames) "_"
+--            , subText
+--                |> textToIcu fromArgType maybeCount
+--                |> wrap
+--            ]
+--                |> String.join ", "
+--                |> wrap
+--
+--        TStaticList (Printer wrapperNames _) subTexts ->
+--            [ wrapWith (ArgStaticList wrapperNames) "_"
+--            , subTexts
+--                |> List.map (textToIcu fromArgType maybeCount)
+--                |> String.join " "
+--                |> wrap
+--            ]
+--                |> String.join ", "
+--                |> wrap
+--
+--        TString (Placeholder _ name) ->
+--            wrapWith ArgString name
+--                |> wrap
+--
+--        TNode (Placeholder _ name) subText ->
+--            [ wrapWith ArgNode name
+--            , ", "
+--            , subText
+--                |> textToIcu fromArgType maybeCount
+--                |> wrap
+--            ]
+--                |> String.concat
+--                |> wrap
+--
+--        TList (Printer printerNames _) (Placeholder _ name) ->
+--            wrapWith (ArgList printerNames) name
+--                |> wrap
+--
+--        TFloat (Printer printerNames _) (Placeholder _ name) ->
+--            wrapWith (ArgFloat printerNames) name
+--                |> wrap
+--
+--        TDate (Printer printerNames _) (Placeholder _ name) ->
+--            wrapWith (ArgDate printerNames) name
+--                |> wrap
+--
+--        TTime (Printer printerNames _) (Placeholder _ name) ->
+--            wrapWith (ArgTime printerNames) name
+--                |> wrap
+--
+--        TPlural (Printer printerNames _) _ (Placeholder _ name) allPluralForms ->
+--            -- TODO: Ordinal?
+--            let
+--                pluralFormToIcu form text =
+--                    form ++ wrap (textToIcu fromArgType Nothing text)
+--            in
+--            [ wrapWith (ArgCardinal printerNames) name
+--            , [ ( "other", Just allPluralForms.other )
+--              , ( "zero", allPluralForms.zero )
+--              , ( "one", allPluralForms.one )
+--              , ( "two", allPluralForms.two )
+--              , ( "few", allPluralForms.few )
+--              , ( "many", allPluralForms.many )
+--              ]
+--                |> List.filterMap
+--                    (\( form, maybeText ) ->
+--                        maybeText
+--                            |> Maybe.map (pluralFormToIcu form)
+--                    )
+--                |> String.join " "
+--            ]
+--                |> String.join ", "
+--                |> wrap
+--
+--        TCount ->
+--            "#"

@@ -22,7 +22,6 @@ module Internal.Icu
 -}
 
 import Char
-import Dict exposing (Dict)
 import Parser exposing (..)
 import Parser.LanguageKit exposing (..)
 import Parser.LowLevel exposing (..)
