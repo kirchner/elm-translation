@@ -4,12 +4,13 @@
     "repository": "https://github.com/user/project.git",
     "license": "Apache License, version 2.0",
     "source-directories": [
-        "src"
+        "src",
+        "."
     ],
     "exposed-modules": [
-        "Translation",
-        "Translation.Generate",
-        "Translation.Icu"
+        "Text",
+        "Text.Generate",
+        "Text.Icu"
     ],
     "dependencies": {
         "elm-community/string-extra": "1.4.0 <= v < 2.0.0",

@@ -1,4 +1,4 @@
-module Translation.Icu
+module Text.Icu
     exposing
         ( ArgType
             ( ArgCardinal
@@ -24,11 +24,11 @@ module Translation.Icu
         , addFloatPrinter
         , addListPrinter
         , addStaticListPrinter
+        , addTexts
         , addTimePrinter
         , addToArgType
         , addToCardinalForm
         , addToOrdinalForm
-        , addTranslations
         , argTypeToCldr
         , cldrToArgType
         , locale
@@ -36,49 +36,6 @@ module Translation.Icu
         )
 
 {-|
-
-
-# Translating `Translation`s
-
-It is possible to dynamically replace translations. For example, if you have a translation
-
-    question : Translation { args | name : String, email : String } node
-    question =
-        final "question" <|
-            concat
-                [ s "Hello, "
-                , string .name "name"
-                , s "! Good to have you back. One question: is "
-                , string .email "email"
-                , s " still your email address?"
-                ]
-
-you can create a `Locale` like so
-
-    deLocale : Locale args node
-    deLocale =
-        Translation.locale
-            |> addTranslations
-                [ ( "question"
-                  , "Hallo, {name}! Schön, dass Du zurück bist."
-                        ++ " Eine Frage: ist {email} immer noch deine aktuelle Email-Adresse?"
-                  )
-                ]
-
-Now you can print the translation `question` replacing the text with the
-translation from `deLocale` if you do this
-
-    print name email =
-        question
-            |> translateTo deLocale
-            |> asStringWith
-                { name = name
-                , email = email
-                }
-
-Then `print "Alice" "alice@localhost"` is equal to `"Hallo, Alice! Schön, dass
-Du zurück bist. Eine Frage: ist alice@localhost immer noch deine aktuelle
-Email-Adresse?"`
 
 @docs translateTo
 
@@ -88,7 +45,7 @@ Email-Adresse?"`
 
 @docs argTypeToCldr, IcuArg
 
-@docs addTranslations
+@docs addTexts
 
 @docs addToCardinalForm, addToOrdinalForm, addAllowedCardinalForms, addAllowedOrdinalForms
 
@@ -100,12 +57,26 @@ import Date exposing (Date)
 import Dict exposing (Dict)
 import Internal.Icu as Icu
 import Set
+import Text
+    exposing
+        ( AllPluralForms
+        , Dynamic
+        , FloatInfo
+        , FloatPrinter
+        , Name
+        , PluralForm
+            ( Few
+            , Many
+            , One
+            , Other
+            , Two
+            , Zero
+            )
+        , Printer
+        , Static
+        , Text
+        )
 import Time exposing (Time)
-import Translation exposing (..)
-
-
-type alias Name =
-    String
 
 
 {-| -}
@@ -221,7 +192,7 @@ argTypeToCldr argType =
             TakePlaceholder ("selectordinal" :: names)
 
 
-{-| Most importantly, you can store translations inside a `Locale` so you can
+{-| Most importantly, you can store texts inside a `Locale` so you can
 use [`translateTo`](#translateTo) to dynamically change your translations. It
 also holds information on how to parse the ICU formatted translations, printers
 for the different types and pluralization rules. You can adjust these to your
@@ -236,16 +207,16 @@ type alias LocaleData args node =
     , translations : Dict (List String) String
 
     -- printer
-    , delimitedPrinters : Dict (List Name) (Printer (Text args node) args node)
-    , staticListPrinters : Dict (List Name) (Printer (List (Text args node)) args node)
+    , delimitedPrinters : Dict (List Name) (Printer (Text Static args node) args node)
+    , staticListPrinters : Dict (List Name) (Printer (List (Text Static args node)) args node)
     , listPrinters : Dict (List Name) (Printer (List String) args node)
-    , floatPrinters : Dict (List Name) (Printer Float args node)
+    , floatPrinters : Dict (List Name) (FloatPrinter args node)
     , datePrinters : Dict (List Name) (Printer Date args node)
     , timePrinters : Dict (List Name) (Printer Time args node)
 
     -- pluralization
-    , toCardinalForm : Float -> String -> PluralForm
-    , toOrdinalForm : Float -> String -> PluralForm
+    , toCardinalForm : Float -> FloatInfo -> PluralForm
+    , toOrdinalForm : Float -> FloatInfo -> PluralForm
     , allowedCardinalForms : List PluralForm
     , allowedOrdinalForms : List PluralForm
     }
@@ -280,9 +251,9 @@ defaultLocaleData =
 
 {-| When parsing an ICU message, we have to decide which keywords correspond to
 which placeholders or printers. For example when using the default
-[`cldrToArgType`](#cldrToArgType) function, the message `"{duration,
-number, decimal, standard}"` should generate a float placeholder named
-"duration" using the printer with the name `[ "decimal", "standard" ]`.
+[`cldrToArgType`](#cldrToArgType) function, the message `"{duration, number,
+decimal, standard}"` should generate a float placeholder named "duration" using
+the printer with the name `[ "decimal", "standard" ]`.
 
 You problably only have to change this if you do not want to use
 [`kirchner/elm-cldr`](https://github.com/kirchner/elm-cldr) but provide
@@ -297,12 +268,12 @@ addToArgType toArgType (Locale localeData) =
         }
 
 
-{-| Add translations to your locale. The first element in the tuple is the key
+{-| Add texts to your locale. The first element in the tuple is the key
 name. These correspond to the first String arguments provided to
 [`final`](#final) and [`fallback`](#fallback).
 -}
-addTranslations : List ( List String, String ) -> Locale args node -> Locale args node
-addTranslations translationList (Locale localeData) =
+addTexts : List ( List String, String ) -> Locale args node -> Locale args node
+addTexts translationList (Locale localeData) =
     Locale
         { localeData
             | translations =
@@ -313,22 +284,22 @@ addTranslations translationList (Locale localeData) =
 
 
 {-| -}
-addDelimitedPrinter : Printer (Text args node) args node -> Locale args node -> Locale args node
+addDelimitedPrinter : Printer (Text Static args node) args node -> Locale args node -> Locale args node
 addDelimitedPrinter printer (Locale localeData) =
     Locale
         { localeData
             | delimitedPrinters =
-                Dict.insert (printerNames printer) printer localeData.delimitedPrinters
+                Dict.insert (Text.printerNames printer) printer localeData.delimitedPrinters
         }
 
 
 {-| -}
-addStaticListPrinter : Printer (List (Text args node)) args node -> Locale args node -> Locale args node
+addStaticListPrinter : Printer (List (Text Static args node)) args node -> Locale args node -> Locale args node
 addStaticListPrinter printer (Locale localeData) =
     Locale
         { localeData
             | staticListPrinters =
-                Dict.insert (printerNames printer) printer localeData.staticListPrinters
+                Dict.insert (Text.printerNames printer) printer localeData.staticListPrinters
         }
 
 
@@ -338,17 +309,17 @@ addListPrinter printer (Locale localeData) =
     Locale
         { localeData
             | listPrinters =
-                Dict.insert (printerNames printer) printer localeData.listPrinters
+                Dict.insert (Text.printerNames printer) printer localeData.listPrinters
         }
 
 
 {-| -}
-addFloatPrinter : Printer Float args node -> Locale args node -> Locale args node
+addFloatPrinter : FloatPrinter args node -> Locale args node -> Locale args node
 addFloatPrinter printer (Locale localeData) =
     Locale
         { localeData
             | floatPrinters =
-                Dict.insert (printerNames printer) printer localeData.floatPrinters
+                Dict.insert (Text.floatPrinterNames printer) printer localeData.floatPrinters
         }
 
 
@@ -358,7 +329,7 @@ addDatePrinter printer (Locale localeData) =
     Locale
         { localeData
             | datePrinters =
-                Dict.insert (printerNames printer) printer localeData.datePrinters
+                Dict.insert (Text.printerNames printer) printer localeData.datePrinters
         }
 
 
@@ -368,19 +339,19 @@ addTimePrinter printer (Locale localeData) =
     Locale
         { localeData
             | timePrinters =
-                Dict.insert (printerNames printer) printer localeData.timePrinters
+                Dict.insert (Text.printerNames printer) printer localeData.timePrinters
         }
 
 
 {-| -}
-addToCardinalForm : (Float -> String -> PluralForm) -> Locale args node -> Locale args node
+addToCardinalForm : (Float -> FloatInfo -> PluralForm) -> Locale args node -> Locale args node
 addToCardinalForm toCardinalForm (Locale localeData) =
     Locale
         { localeData | toCardinalForm = toCardinalForm }
 
 
 {-| -}
-addToOrdinalForm : (Float -> String -> PluralForm) -> Locale args node -> Locale args node
+addToOrdinalForm : (Float -> FloatInfo -> PluralForm) -> Locale args node -> Locale args node
 addToOrdinalForm toOrdinalForm (Locale localeData) =
     Locale
         { localeData | toOrdinalForm = toOrdinalForm }
@@ -446,24 +417,32 @@ makePluralFormsUnique =
 {-| -}
 translateTo :
     Locale args node
-    -> Translation args node
-    -> Translation args node
-translateTo (Locale localeData) translation =
+    -> Text Dynamic args node
+    -> Text Dynamic args node
+translateTo (Locale localeData) text =
+    let
+        ( args, scope, name, staticText ) =
+            Text.staticText text
+    in
     localeData.translations
-        |> Dict.get (name translation)
+        |> Dict.get (scope ++ [ name ])
         |> Maybe.andThen (Icu.parse >> Result.toMaybe)
         |> Maybe.map
-            (icuToText locale
-                { node = nodeArgs translation
-                , string = stringArgs translation
-                , list = listArgs translation
-                , float = floatArgs translation
-                , date = dateArgs translation
-                , time = timeArgs translation
-                }
-                >> Translation.translation (name translation)
+            (\message ->
+                icuToText locale
+                    { node = args.nodeArgs
+                    , string = args.stringArgs
+                    , list = args.listArgs
+                    , float = args.floatArgs
+                    , date = args.dateArgs
+                    , time = args.timeArgs
+                    }
+                    message
+                    |> Text.name name
+                    |> Text.scope scope
+                    |> Text.nameArgs args
             )
-        |> Maybe.withDefault translation
+        |> Maybe.withDefault text
 
 
 
@@ -480,19 +459,19 @@ type alias Placeholders args node =
     }
 
 
-icuToText : Locale args node -> Placeholders args node -> Icu.Message -> Text args node
+icuToText : Locale args node -> Placeholders args node -> Icu.Message -> Text Static args node
 icuToText locale accessors message =
     message
         |> List.map (icuPartToText locale accessors)
-        |> concat
+        |> Text.concat
 
 
-icuPartToText : Locale args node -> Placeholders args node -> Icu.Part -> Text args node
+icuPartToText : Locale args node -> Placeholders args node -> Icu.Part -> Text Static args node
 icuPartToText ((Locale localeData) as locale) accessors part =
     let
         simplePlaceholder constructor placeholder otherNames printers accessorType =
             Maybe.map2
-                (\printer accessor -> constructor printer accessor placeholder)
+                (\printer accessor -> constructor accessor printer)
                 (localeData
                     |> printers
                     |> Dict.get otherNames
@@ -501,11 +480,11 @@ icuPartToText ((Locale localeData) as locale) accessors part =
                     |> accessorType
                     |> Dict.get placeholder
                 )
-                |> Maybe.withDefault (s "")
+                |> Maybe.withDefault (Text.s "")
     in
     case part of
         Icu.Text text ->
-            s text
+            Text.s text
 
         Icu.Argument { placeholder, names, subMessages } ->
             case localeData.toArgType (placeholder :: names) of
@@ -516,13 +495,13 @@ icuPartToText ((Locale localeData) as locale) accessors part =
                                 |> Dict.get otherNames
                                 |> Maybe.map
                                     (\printer ->
-                                        delimited printer <|
+                                        Text.delimited printer <|
                                             icuToText locale accessors message
                                     )
-                                |> Maybe.withDefault (s "")
+                                |> Maybe.withDefault (Text.s "")
 
                         _ ->
-                            s ""
+                            Text.s ""
 
                 Just (ArgStaticList otherNames) ->
                     let
@@ -532,25 +511,25 @@ icuPartToText ((Locale localeData) as locale) accessors part =
                                     icuToText locale accessors message
 
                                 Icu.Named _ ->
-                                    s ""
+                                    Text.s ""
                     in
                     localeData.staticListPrinters
                         |> Dict.get otherNames
                         |> Maybe.map
                             (\printer ->
-                                staticList printer <|
+                                Text.staticList printer <|
                                     List.map toText subMessages
                             )
-                        |> Maybe.withDefault (s "")
+                        |> Maybe.withDefault (Text.s "")
 
                 Just ArgString ->
                     accessors.string
                         |> Dict.get placeholder
                         |> Maybe.map
                             (\accessor ->
-                                string accessor placeholder
+                                Text.string accessor
                             )
-                        |> Maybe.withDefault (s "")
+                        |> Maybe.withDefault (Text.s "")
 
                 Just ArgNode ->
                     accessors.node
@@ -559,72 +538,72 @@ icuPartToText ((Locale localeData) as locale) accessors part =
                             (\accessor ->
                                 case subMessages of
                                     (Icu.Unnamed { message }) :: [] ->
-                                        node accessor placeholder <|
+                                        Text.node accessor <|
                                             icuToText locale accessors message
 
                                     _ ->
-                                        s ""
+                                        Text.s ""
                             )
-                        |> Maybe.withDefault (s "")
+                        |> Maybe.withDefault (Text.s "")
 
                 Just (ArgList otherNames) ->
-                    simplePlaceholder list placeholder otherNames .listPrinters .list
+                    simplePlaceholder Text.list placeholder otherNames .listPrinters .list
 
                 Just (ArgFloat otherNames) ->
-                    simplePlaceholder float placeholder otherNames .floatPrinters .float
+                    simplePlaceholder Text.float placeholder otherNames .floatPrinters .float
 
                 Just (ArgDate otherNames) ->
-                    simplePlaceholder date placeholder otherNames .datePrinters .date
+                    simplePlaceholder Text.date placeholder otherNames .datePrinters .date
 
                 Just (ArgTime otherNames) ->
-                    simplePlaceholder time placeholder otherNames .timePrinters .time
+                    simplePlaceholder Text.time placeholder otherNames .timePrinters .time
 
                 Just (ArgCardinal otherNames) ->
                     Maybe.map3
                         (\printer accessor allPluralForms ->
-                            plural
+                            Text.plural
+                                accessor
                                 printer
                                 localeData.toCardinalForm
-                                accessor
-                                placeholder
+                                []
                                 allPluralForms
                         )
                         (Dict.get otherNames localeData.floatPrinters)
                         (Dict.get placeholder accessors.float)
                         (allPluralForms (icuToText locale accessors) subMessages)
-                        |> Maybe.withDefault (s "")
+                        |> Maybe.withDefault (Text.s "")
 
                 Just (ArgOrdinal otherNames) ->
                     Maybe.map3
                         (\printer accessor allPluralForms ->
-                            plural
+                            Text.plural
+                                accessor
                                 printer
                                 localeData.toOrdinalForm
-                                accessor
-                                placeholder
+                                []
                                 allPluralForms
                         )
                         (Dict.get otherNames localeData.floatPrinters)
                         (Dict.get placeholder accessors.float)
                         (allPluralForms (icuToText locale accessors) subMessages)
-                        |> Maybe.withDefault (s "")
+                        |> Maybe.withDefault (Text.s "")
 
                 Nothing ->
-                    s ""
+                    Text.s ""
 
         Icu.Hash ->
-            count
+            Text.count
 
 
 allPluralForms :
-    (Icu.Message -> Text args node)
+    (Icu.Message -> Text Static args node)
     -> List Icu.SubMessage
     -> Maybe (AllPluralForms args node)
 allPluralForms toText subMessages =
     subMessages
         |> List.foldl
             (addPluralForm toText)
-            { other = s ""
+            { other = Text.s ""
             , zero = Nothing
             , one = Nothing
             , two = Nothing
@@ -635,7 +614,7 @@ allPluralForms toText subMessages =
 
 
 addPluralForm :
-    (Icu.Message -> Text args node)
+    (Icu.Message -> Text Static args node)
     -> Icu.SubMessage
     -> AllPluralForms args node
     -> AllPluralForms args node

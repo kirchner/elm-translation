@@ -1,4 +1,4 @@
-module Translation.Generate
+module Text.Generate
     exposing
         ( Argument
             ( Cardinal

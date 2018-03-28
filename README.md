@@ -18,18 +18,17 @@ A very simple translation looks like this:
 ```elm
 module Translations.En exposing (..)
 
-import Translation exposing (Translation, final, s)
+import Text exposing (Text, Static, final, s)
 
-greeting : Translation args node
+greeting : Text Static args node
 greeting =
-    final "greeting" <|
-        s "Good morning!"
+    s "Good morning!"
 ```
 
 and to turn it into a `String` you do
 
 ```elm
-import Translation exposing (asString)
+import Text exposing (asString)
 import Translations.En exposing (..)
 
 view =
@@ -43,25 +42,24 @@ You can also mix in placeholders into your translations:
 ```elm
 module Translations.En exposing (..)
 
-import Translation exposing (Translation, final, s, string, concat)
+import Text exposing (Text, Static, final, s, string, concat)
 
-question : Translation { args | name : String, email : String } node
+question : Text Static { args | name : String, email : String } node
 question =
-    final "question" <|
-        concat
-            [ s "Hello, "
-            , string .name "name"
-            , s "! Good to have you back. One question: is "
-            , string .email "email"
-            , s " still your email address?"
-            ]
+    concat
+        [ s "Hello, "
+        , string .name
+        , s "! Good to have you back. One question: is "
+        , string .email
+        , s " still your email address?"
+        ]
 ```
 
 You then have to provide values for these placeholders when using this
 translation:
 
 ```elm
-import Translation exposing (asStringWith)
+import Text exposing (asStringWith)
 import Translations.En exposing (..)
 
 view name email =
@@ -82,10 +80,11 @@ writing plain Html code in it, you can do the following:
 ```elm
 import Html exposing (Html, a, div, strong, text)
 import Html.Attributes exposing (href)
-import Translation exposing (Translation, final, s, concat, node, asNodes)
+import Text exposing (Text, Static, final, s, concat, node, asNodes)
 
 info :
-    Translation
+    Text
+        Static
         { args
             | docsLink : List node -> node
             , contactLink : List node -> node
@@ -93,19 +92,18 @@ info :
         }
         node
 info =
-    final "info" <|
-        concat
-            [ s "You will find useful information in our "
-            , node .docsLink "docsLink" <|
-                s "documentation"
-            , s ". But if you have further questions, feel free to "
-            , node .contactLink "contactLink" <|
-                "contact us"
-            , s " at "
-            , node .strong "strong" <|
-                s "any time"
-            , s "!"
-            ]
+    concat
+        [ s "You will find useful information in our "
+        , node .docsLink <|
+            s "documentation"
+        , s ". But if you have further questions, feel free to "
+        , node .contactLink <|
+            "contact us"
+        , s " at "
+        , node .strong <|
+            s "any time"
+        , s "!"
+        ]
 
 
 view : Html msg
@@ -147,16 +145,15 @@ into a `String`:
 ```elm
 module Translations.En exposing (..)
 
-import Translation exposing (Translation, Printer, printer, final, s, float, concat)
+import Text exposing (Text Static, Printer, printer, final, s, float, concat)
 
-mailboxInfo : Translation { args | count : Float } node
+mailboxInfo : Text Static { args | count : Float } node
 mailboxInfo =
-    final "mailboxInfo" <|
-        concat
-            [ s "Number of new mails: "
-            , float intPrinter .count "count"
-            , s "."
-            ]
+    concat
+        [ s "Number of new mails: "
+        , float .count intPrinter
+        , s "."
+        ]
 
 intPrinter : Printer Float args node
 intPrinter =
@@ -178,16 +175,15 @@ example using `elm-cldr` would look like this:
 module Translations.De exposing (..)
 
 import Cldr.De exposing (decimalStandard)
-import Translation exposing (Translation, final, s, float, concat)
+import Text exposing (Text, Static, final, s, float, concat)
 
-mailboxInfo : Translation { args | count : Float } node
+mailboxInfo : Text Static { args | count : Float } node
 mailboxInfo =
-    final "mailboxInfo" <|
-        concat
-            [ s "Anzahl neuer Emails: "
-            , float decimalStandard .count "count"
-            , s "."
-            ]
+    concat
+        [ s "Anzahl neuer Emails: "
+        , float .count decimalStandard
+        , s "."
+        ]
 ```
 
 **Note:** Right now, `kirchner/elm-cldr` does not expose `Printer`'s for
@@ -205,25 +201,28 @@ these situations. They let you do the following:
 module Translations.De exposing (..)
 
 import Cldr.De exposing (cardinal, decimalStandard)
-import Translation exposing (Translation, s, concat)
+import Text exposing (Text, Static, s, concat)
 
-newMailsInfo : Translation { args | count : Float } node
+newMailsInfo : Text Static { args | count : Float } node
 newMailsInfo =
-    final "newMailsInfo" <|
-        cardinal decimalStandard .count "count" <|
-            { other =
-                concat
-                    [ s "Du hast "
-                    , count
-                    , s " neue Emails."
-                    ]
-            , one =
-                concat
-                    [ s "Du hast "
-                    , count
-                    , s " neue Email."
-                    ]
-            }
+    cardinal .count
+        decimalStandard
+        [ ( 0, "Du hast keine neue Email." )
+        , ( 12, "Du hast ein Dutzend neue Emails." )
+        ]
+        { other =
+            concat
+                [ s "Du hast "
+                , count
+                , s " neue Emails."
+                ]
+        , one =
+            concat
+                [ s "Du hast "
+                , count
+                , s " neue Email."
+                ]
+        }
 ```
 
 Then calling `newMailsInfo |> asStringWith { count = 1 }` is equal to `"Du hast
@@ -240,18 +239,17 @@ You can add quotation marks to your translations:
 ```elm
 module Translations.De exposing (..)
 
-import Translation exposing (Translation, final, s, delimited, concat)
+import Text exposing (Text, Static, final, s, delimited, concat)
 
-assumption : Translation args node
+assumption : Text Static args node
 assumption =
-    final "assumption" <|
-        concat
-            [ s "Ihr fragt euch wahrscheinlich: "
-            , delimited quotePrinter <|
-                s "Was soll das alles?"
-            ]
+    concat
+        [ s "Ihr fragt euch wahrscheinlich: "
+        , delimited quotePrinter <|
+            s "Was soll das alles?"
+        ]
 
-quotePrinter : Printer (Text args node) args node
+quotePrinter : Printer (Text m args node) args node
 quotePrinter =
     printer [ "quotes", "outer" ] <|
         \text ->
@@ -268,19 +266,18 @@ alles?“"`. Also verbalizing lists is possible:
 ```elm
 module Translations.En exposing (..)
 
-import Translation exposing (Translation, final, s, staticList, concat)
+import Text exposing (Text, Static, final, s, staticList, concat)
 
-membersInfo : Translation args node
+membersInfo : Text Static args node
 membersInfo =
-    final "membersInfo" <|
-        concat
-            [ s "These are all our members: "
-            , staticList andPrinter
-                [ s "Alice"
-                , s "Bob"
-                , s "Cindy"
-                ]
+    concat
+        [ s "These are all our members: "
+        , staticList andPrinter
+            [ s "Alice"
+            , s "Bob"
+            , s "Cindy"
             ]
+        ]
 
 andPrinter : Printer (List (Text args node)) args node
 andPrinter =
@@ -312,16 +309,15 @@ Also, dynamic lists are possible:
 ```elm
 module Translations.En exposing (..)
 
-import Translation exposing (Translation, final, s, list, concat)
+import Text exposing (Text, Static, final, s, list, concat)
 
-fruitList : Translation { args | fruits : List String } node
+fruitList : Text Static { args | fruits : List String } node
 fruitList =
-    final "fruitList" <|
-        concat
-            [ s "Do you really want to by "
-            , list andPrinter .fruits "fruits"
-            , s "?"
-            ]
+    concat
+        [ s "Do you really want to by "
+        , list .fruits andPrinter
+        , s "?"
+        ]
 
 andPrinter : Printer (List String) args node
 andPrinter =
@@ -372,39 +368,41 @@ looks like this:
 ```elm
 module Translations.En exposing (..)
 
-import Translation exposing (Translation, final, concat, s, string)
+import Text exposing (Text, Static, final, concat, s, string)
 
-greeting : Translation args node
+greeting : Text Static args node
 greeting =
-    final "greeting" <|
-        s "Good morning!"
+    s "Good morning!"
 
-question : Translation { args | name : String, email : String } node
+question : Text Static { args | name : String, email : String } node
 question =
-    final "question" <|
-        concat
-            [ s "Hello, "
-            , string .name "name"
-            , s "! Good to have you back. One question: is "
-            , string .email "email"
-            , s " still your email address?"
-            ]
+    concat
+        [ s "Hello, "
+        , string .name
+        , s "! Good to have you back. One question: is "
+        , string .email
+        , s " still your email address?"
+        ]
 ```
 
 You then can dynamically replace these translations like so:
 
 ```elm
 import Html
-import Translation exposing (translateTo, asString, asStringWith)
+import Text exposing (translateTo, asString, asStringWith)
 import Translations.En exposing (..)
 
 view name email =
     Html.div []
         [ greeting
+            |> name "greeting"
             |> translateTo dynamicLocale
             |> asString
             |> Html.text
         , question
+            |> name "question"
+            |> arg .name "name"
+            |> arg .email "email"
             |> translateTo dynamicLocale
             |> asStringWith
                 { name = name
@@ -428,3 +426,20 @@ dynamicLocale =
 In a real application you then probably want to load the list of translations
 from a server and place `dynamicLocale` inside your model. There are helpers to
 add pluralization rules and printers to a `Locale`.
+
+Note the type change from `Text Static args node` to `Text Dynamic args node`:
+
+```elm
+greetingDynamic : Text Dynamic args node
+greetingDynamic =
+    greeting
+        |> name "greeting"
+        |> translateTo dynamicLocale
+
+questionDynamic : Text Dynamic args node
+questionDynamic =
+    question
+        |> name "question"
+        |> arg .name "name"
+        |> arg .email "email"
+```
