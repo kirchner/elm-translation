@@ -9,7 +9,6 @@
     ],
     "exposed-modules": [
         "Text",
-        "Text.Generate",
         "Text.Icu"
     ],
     "dependencies": {
