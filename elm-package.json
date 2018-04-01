@@ -8,8 +8,7 @@
         "."
     ],
     "exposed-modules": [
-        "Text",
-        "Text.Icu"
+        "Text"
     ],
     "dependencies": {
         "elm-community/string-extra": "1.4.0 <= v < 2.0.0",

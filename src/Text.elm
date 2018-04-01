@@ -26,7 +26,6 @@ module Text
         , delimited
         , float
         , floatPrinter
-        , floatPrinterNames
         , list
         , name
         , nameArgs
@@ -39,7 +38,6 @@ module Text
         , node
         , plural
         , printer
-        , printerNames
         , s
         , scope
         , staticList
@@ -90,7 +88,7 @@ a variety of examples.
 
 # Printers
 
-@docs Printer, printer, printerNames, FloatPrinter, floatPrinter, floatPrinterNames, FloatInfo
+@docs Printer, printer, FloatPrinter, floatPrinter, FloatInfo
 
 
 # Dynamic `Text`'s
@@ -386,12 +384,12 @@ nameTime accessor name text =
 We do this by providing a `Printer`.
 -}
 type Printer a args node
-    = Printer (List Name) (a -> Text Static args node)
+    = Printer (a -> Text Static args node)
 
 
 {-| -}
 type FloatPrinter args node
-    = FloatPrinter (List Name) (Float -> Text Static args node) (Float -> FloatInfo)
+    = FloatPrinter (Float -> Text Static args node) (Float -> FloatInfo)
 
 
 {-| -}
@@ -402,12 +400,11 @@ type alias FloatInfo =
     }
 
 
-{-| Create a `FloatPrinter`. The first argument should be a unique
-identifier, the second argument is the actual "printer":
+{-| Create a `FloatPrinter`.
 
     intPrinter : FloatPrinter args node
     intPrinter =
-        floatPrinter [ "int" ]
+        floatPrinter
             (floor >> toString >> s)
             (\float ->
                 let
@@ -420,58 +417,39 @@ identifier, the second argument is the actual "printer":
                 }
             )
 
-    integerDigits : Int -> List Int
     integerDigits int =
         integerDigitsHelp [] int
             |> List.reverse
 
-    integerDigitsHelp : List Int -> Int -> List Int
     integerDigitsHelp digits int =
         integerDigitsHelp
             ((int % 10) :: digits)
             (int // 10)
 
-The third argument is used when you have a pluralized text, so we can decide
+The second argument is used when you have a pluralized text, so we can decide
 which plural form should be chosen.
 
 -}
 floatPrinter :
-    List Name
-    -> (Float -> Text Static args node)
+    (Float -> Text Static args node)
     -> (Float -> FloatInfo)
     -> FloatPrinter args node
 floatPrinter =
     FloatPrinter
 
 
-{-| If you need to get the Names of a `FloatPrinter`.
--}
-floatPrinterNames : FloatPrinter args node -> List Name
-floatPrinterNames (FloatPrinter names _ _) =
-    names
-
-
-{-| Create a `Printer`. The first argument should be a unique
-identifier, the second argument is the actual "printer". For example,
-you can lift `toString` to a printer:
+{-| Create a `Printer`. For example, you can lift `toString` to a printer:
 
     stringify : Printer a args node
     stringify =
-        printer [ "stringify" ] <|
+        printer <|
             \a ->
                 s (toString a)
 
 -}
-printer : List Name -> (a -> Text Static args node) -> Printer a args node
+printer : (a -> Text Static args node) -> Printer a args node
 printer =
     Printer
-
-
-{-| If you need to get the Names of a `Printer`.
--}
-printerNames : Printer a args node -> List Name
-printerNames (Printer names _) =
-    names
 
 
 {-| This type represents all 6 plural forms defined by the
@@ -577,7 +555,7 @@ node =
 
     quotePrinter : Printer (Text Static args node) args node
     quotePrinter =
-        printer [ "quotes", "outer" ] <|
+        printer <|
             \text ->
                 concat
                     [ s "‟"
@@ -617,7 +595,7 @@ this is like `concat` but you can specify how to actually join the
 
     andPrinter : Printer (List (Text Static args node)) args node
     andPrinter =
-        printer [ "list", "and" ] <|
+        printer <|
             \texts ->
                 case List.reverse texts of
                     [] ->
@@ -672,7 +650,7 @@ provide a `Printer (List String) args node`:
 
     andPrinter : Printer (List String) args node
     andPrinter =
-        printer [ "list", "and" ] <|
+        printer <|
             \strings ->
                 case List.reverse strings of
                     [] ->
@@ -713,7 +691,7 @@ a `FloatPrinter`, so we know how to turn the actual value into a `Text`:
 
     intPrinter : FloatPrinter
     intPrinter =
-        floatPrinter [ "int" ]
+        floatPrinter
             (floor >> toString >> s)
             (\float ->
                 let
@@ -968,12 +946,12 @@ asNodesHelp maybeCount stringToNode args text =
                 |> List.map (asNodesHelp maybeCount stringToNode args)
                 |> List.concat
 
-        TDelimited (Printer _ printer) subText ->
+        TDelimited (Printer printer) subText ->
             subText
                 |> printer
                 |> asNodesHelp maybeCount stringToNode args
 
-        TStaticList (Printer _ printer) subTexts ->
+        TStaticList (Printer printer) subTexts ->
             subTexts
                 |> printer
                 |> asNodesHelp maybeCount stringToNode args
@@ -990,31 +968,31 @@ asNodesHelp maybeCount stringToNode args text =
                 |> accessor args
             ]
 
-        TList accessor (Printer _ printer) ->
+        TList accessor (Printer printer) ->
             args
                 |> accessor
                 |> printer
                 |> asNodesHelp maybeCount stringToNode args
 
-        TFloat accessor (FloatPrinter _ printer _) ->
+        TFloat accessor (FloatPrinter printer _) ->
             args
                 |> accessor
                 |> printer
                 |> asNodesHelp maybeCount stringToNode args
 
-        TDate accessor (Printer _ printer) ->
+        TDate accessor (Printer printer) ->
             args
                 |> accessor
                 |> printer
                 |> asNodesHelp maybeCount stringToNode args
 
-        TTime accessor (Printer _ printer) ->
+        TTime accessor (Printer printer) ->
             args
                 |> accessor
                 |> printer
                 |> asNodesHelp maybeCount stringToNode args
 
-        TPlural accessor (FloatPrinter _ printer info) toPluralForm otherTexts allPluralForms ->
+        TPlural accessor (FloatPrinter printer info) toPluralForm otherTexts allPluralForms ->
             let
                 float =
                     accessor args
